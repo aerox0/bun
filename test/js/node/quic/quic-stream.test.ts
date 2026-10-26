@@ -657,16 +657,108 @@ describe("HTTP/3 header blocks that follow another header block", () => {
     expect(received.filter(message => message.bytes !== size || message.checksum !== checksum)).toEqual([]);
   });
 
-  // lsquic keeps the part of a header block that the congestion window has no room for, and takes no
-  // other header block for that stream until it has sent that part. The blocks that a server sends while
-  // it answers the requests of one read share the window, so the later streams of a burst run out of it.
-  test("every stream of a burst gets the response that follows its interim response", async () => {
-    const streams = 24;
-    // About 6 KB a stream: together several times lsquic's initial window of 32 packets.
-    const link = Array.from({ length: 128 }, (_, i) => `</assets/chunk-${i}.js>; rel=preload; as=script`).join(", ");
-    // Opening the streams can block the event loop for longer than the 1-second idle timeout of the other tests.
-    const maxIdleTimeout = 30;
-    const sent: boolean[] = [];
+  // lsquic keeps the part of a header block that it can't send yet, and takes no other header block for
+  // that stream until it has sent that part. The blocks that a server sends while it answers the requests
+  // of one read share the congestion window, so the later streams of a burst run out of it. A stream's own
+  // flow-control window holds a block back in the same way, and only that wait is reported as blocked.
+  test.each([
+    {
+      limit: "the congestion window",
+      streams: 24,
+      window: {},
+      // About 6 KB a stream: together several times lsquic's initial window of 32 packets.
+      link: Array.from({ length: 128 }, (_, i) => `</assets/chunk-${i}.js>; rel=preload; as=script`).join(", "),
+      field: "",
+      blocked: 0,
+    },
+    {
+      limit: "each stream's flow-control window",
+      streams: 8,
+      window: { initialMaxStreamDataBidiLocal: 4096 },
+      // Bytes that Huffman coding doesn't shorten. Neither block fits in the window.
+      link: Buffer.alloc(4200, "~").toString(),
+      field: Buffer.alloc(6000, "~").toString(),
+      blocked: 8,
+    },
+  ])(
+    "every stream of a burst gets the response that follows its interim response, behind $limit",
+    async ({ streams, window, link, field, blocked }) => {
+      // Opening the streams can block the event loop for longer than the 1-second idle timeout of the other tests.
+      const maxIdleTimeout = 30;
+      const sent: boolean[] = [];
+      const reportedBlocked = new Set<unknown>();
+      await using server = await listen(
+        async serverSession => {
+          serverSession.onstream = (stream: any) => {
+            stream.closed.catch(() => {});
+          };
+          await serverSession.closed.catch(() => {});
+        },
+        {
+          sni: { "*": { keys: [key], certs: [cert] } },
+          transportParams: { maxIdleTimeout, initialMaxStreamsBidi: streams },
+          onheaders(this: any) {
+            this.onblocked = () => void reportedBlocked.add(this);
+            sent.push(
+              this.sendInformationalHeaders({ ":status": "103", link }),
+              this.sendHeaders(field ? { ":status": "200", "x-field": field } : { ":status": "200" }),
+            );
+            this.writer.writeSync(encoder.encode("hello"));
+            this.writer.endSync();
+          },
+        },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client = await connect(server.address!, {
+        endpoint,
+        servername: "localhost",
+        verifyPeer: "manual",
+        transportParams: { maxIdleTimeout, ...window },
+        onerror() {},
+      } as SessionOptions);
+      client.closed.catch(() => {});
+      await client.opened;
+      // What one stream gets. A stream that the server had to reset ends with the error's code.
+      async function response() {
+        const events: string[] = [];
+        const intact = (got: string | undefined, want: string) => ((got ?? "") === want ? "intact" : "damaged");
+        const stream: any = await client.createBidirectionalStream({
+          headers: request("/"),
+          oninfo: (headers: Record<string, string>) =>
+            void events.push(`info ${headers[":status"]} ${intact(headers.link, link)}`),
+          onheaders: (headers: Record<string, string>) =>
+            void events.push(`headers ${headers[":status"]} ${intact(headers["x-field"], field)}`),
+        } as any);
+        stream.closed.catch(() => {});
+        let body = "";
+        try {
+          for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
+          events.push("body " + body);
+        } catch (error: any) {
+          events.push("error " + error.code);
+        }
+        return events.join(", ");
+      }
+      const responses = await Promise.all(Array.from({ length: streams }, response));
+      if (!client.destroyed) client.close().catch(() => {});
+      expect({ refused: sent.filter(taken => !taken).length, blocked: reportedBlocked.size, responses }).toEqual({
+        refused: 0,
+        blocked,
+        responses: Array.from({ length: streams }, () => "info 103 intact, headers 200 intact, body hello"),
+      });
+    },
+  );
+
+  // The second block leaves the queue in a write event that has nothing else to send, and lsquic holds the
+  // part of it that the stream's window has no room for. The stream has to keep its write interest until
+  // that part is out, or nothing flushes the end of the block and the client waits for it until the test
+  // times out.
+  test("a client gets a second interim response while the server has nothing else to send", async () => {
+    // Bytes that Huffman coding doesn't shorten.
+    const field = (length: number) => Buffer.alloc(length, "~").toString();
+    const transportParams = { maxIdleTimeout: 2 };
+    const bothSeen = Promise.withResolvers<void>();
+    const answered = Promise.withResolvers<boolean[]>();
     await using server = await listen(
       async serverSession => {
         serverSession.onstream = (stream: any) => {
@@ -676,43 +768,47 @@ describe("HTTP/3 header blocks that follow another header block", () => {
       },
       {
         sni: { "*": { keys: [key], certs: [cert] } },
-        transportParams: { maxIdleTimeout, initialMaxStreamsBidi: streams },
-        onheaders(this: any) {
-          sent.push(this.sendInformationalHeaders({ ":status": "103", link }), this.sendHeaders({ ":status": "200" }));
-          this.writer.writeSync(encoder.encode("hello"));
-          this.writer.endSync();
+        transportParams,
+        async onheaders(this: any) {
+          const sent = [
+            this.sendInformationalHeaders({ ":status": "103", "x-first": field(5000) }),
+            this.sendInformationalHeaders({ ":status": "103", "x-second": field(3000) }),
+          ];
+          await bothSeen.promise;
+          answered.resolve([...sent, this.sendHeaders({ ":status": "204" }, { terminal: true })]);
         },
       },
     );
-    const client = await connectTo(server, maxIdleTimeout);
-    // What one stream gets. A stream that the server had to reset ends with the error's code.
-    async function response() {
-      const events: string[] = [];
-      const stream: any = await client.createBidirectionalStream({
+    await using endpoint = new QuicEndpoint();
+    // The server's send window on the stream is smaller than either block.
+    const client = await connect(server.address!, {
+      endpoint,
+      servername: "localhost",
+      verifyPeer: "manual",
+      transportParams: { ...transportParams, initialMaxStreamDataBidiLocal: 4096 },
+      onerror() {},
+    } as SessionOptions);
+    client.closed.catch(() => {});
+    let stream: any;
+    try {
+      await client.opened;
+      const blocks: string[] = [];
+      stream = await client.createBidirectionalStream({
         headers: request("/"),
-        oninfo: (headers: Record<string, string>) =>
-          void events.push(
-            `info ${headers[":status"]} ${headers.link === link ? "with its link" : "without its link"}`,
-          ),
-        onheaders: (headers: Record<string, string>) => void events.push("headers " + headers[":status"]),
+        oninfo: (block: Record<string, string>) => {
+          blocks.push(`info ${block[":status"]} ${(block["x-first"] ?? block["x-second"])?.length}`);
+          if (blocks.length === 2) bothSeen.resolve();
+        },
+        onheaders: (block: Record<string, string>) => void blocks.push("headers " + block[":status"]),
       } as any);
       stream.closed.catch(() => {});
-      let body = "";
-      try {
-        for await (const batch of stream) for (const chunk of batch) body += Buffer.from(chunk).toString("latin1");
-        events.push("body " + body);
-      } catch (error: any) {
-        events.push("error " + error.code);
-      }
-      return events.join(", ");
+      expect(await answered.promise).toEqual([true, true, true]);
+      for await (const _ of stream);
+      expect(blocks).toEqual(["info 103 5000", "info 103 3000", "headers 204"]);
+    } finally {
+      stream?.destroy();
+      if (!client.destroyed) client.close().catch(() => {});
     }
-    const responses = await Promise.all(Array.from({ length: streams }, response));
-    client.close();
-    const complete = "info 103 with its link, headers 200, body hello";
-    expect({ refused: sent.filter(taken => !taken).length, responses }).toEqual({
-      refused: 0,
-      responses: Array.from({ length: streams }, () => complete),
-    });
   });
 
   // One block of this size is more than the window, so lsquic still holds part of it when the calls
@@ -720,8 +816,8 @@ describe("HTTP/3 header blocks that follow another header block", () => {
   describe.concurrent("behind a block that's larger than the congestion window", () => {
     // About 175 KB as a header block. lsquic's initial window is 32 packets.
     const value = Buffer.alloc(2000, "v").toString();
-    const large = (headers: Record<string, string>) => {
-      for (let i = 0; i < 100; i++) headers[`x-large-${i}`] = value;
+    const large = (headers: Record<string, string>, fields = 100) => {
+      for (let i = 0; i < fields; i++) headers[`x-large-${i}`] = value;
       return headers;
     };
     // The receiver drops the fields that go over the default of 16 KB.
@@ -776,31 +872,21 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         ["info 103 +100", "headers 204"],
       ],
       [
-        // lsquic holds the rest of the block until the peer has acknowledged part of it, which takes longer than a turn of the event loop.
-        "a response that's sent a turn later",
-        async stream => {
-          const hinted = stream.sendInformationalHeaders(hint());
-          await new Promise(resolve => setImmediate(resolve));
-          return [hinted, stream.sendHeaders({ ":status": "204" }, { terminal: true })];
-        },
-        [true, true],
-        ["info 103 +100", "headers 204"],
-      ],
-      [
-        // The response is queued behind two blocks. lsquic still holds the second one when it has sent the first.
-        "a second large interim response, a response and its body",
+        // lsquic holds each of these blocks in turn. A block that it refuses goes back to the front of the queue.
+        "three large interim responses in order, a response and its body",
         stream => {
           const sent = [
-            stream.sendInformationalHeaders(hint()),
-            stream.sendInformationalHeaders(hint()),
+            stream.sendInformationalHeaders(large({ ":status": "100" })),
+            stream.sendInformationalHeaders(large({ ":status": "102" })),
+            stream.sendInformationalHeaders(large({ ":status": "103" })),
             stream.sendHeaders({ ":status": "200" }),
           ];
           stream.writer.writeSync(encoder.encode("hello"));
           stream.writer.endSync();
           return sent;
         },
-        [true, true, true],
-        ["info 103 +100", "info 103 +100", "headers 200"],
+        [true, true, true, true],
+        ["info 100 +100", "info 102 +100", "info 103 +100", "headers 200"],
         "hello",
       ],
       [
@@ -835,6 +921,17 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         stream => [stream.sendHeaders(large({ ":status": "200" })), stream.sendTrailers({ "x-checksum": "abc123" })],
         [true, true],
         ["headers 200 +100", "trailers abc123"],
+      ],
+      [
+        // Trailers end the stream when lsquic takes them, with or without a queue. A body that isn't out by then is dropped.
+        "a large response and large trailers that were sent ahead of its body",
+        stream => {
+          const sent = [stream.sendHeaders(large({ ":status": "200" }))];
+          stream.writer.writeSync(encoder.encode("hello"));
+          return [...sent, stream.sendTrailers(large({ "x-checksum": "abc123" }))];
+        },
+        [true, true],
+        ["headers 200 +100", "trailers abc123 +100"],
       ],
       [
         // One call sends 128 fields at most. That block isn't queued, so the next call can still answer.
@@ -955,6 +1052,61 @@ describe("HTTP/3 header blocks that follow another header block", () => {
         });
       } finally {
         closeWith(client, stream);
+      }
+    });
+
+    // The response leaves the queue in the write event that sends the end of the interim response, and lsquic
+    // then holds most of it. destroy() can't deliver the body behind that part, so it resets the stream.
+    test("destroy() resets only its own stream while lsquic holds part of a response that was queued", async () => {
+      let responding: any;
+      await using server = await listen(
+        async serverSession => {
+          serverSession.onstream = (stream: any) => {
+            stream.closed.catch(() => {});
+          };
+          await serverSession.closed.catch(() => {});
+        },
+        {
+          ...tls,
+          onheaders(this: any, block: Record<string, string>) {
+            if (block[":path"] === "/next") return void this.sendHeaders({ ":status": "204" }, { terminal: true });
+            responding = this;
+            // Smaller than the response, so lsquic can't have sent all of the response when the client has this block.
+            this.sendInformationalHeaders(large({ ":status": "103" }, 40));
+            this.sendHeaders(large({ ":status": "200" }));
+            this.writer.writeSync(encoder.encode("hello"));
+            this.writer.endSync();
+          },
+        },
+      );
+      await using endpoint = new QuicEndpoint();
+      const client = await connectWith(endpoint, server);
+      // How a request ends for the client: with the final status, or with the error's code.
+      async function get(path: string, oninfo?: () => void) {
+        let status = "no response";
+        try {
+          const stream = await client.createBidirectionalStream({
+            headers: request(path),
+            oninfo,
+            onheaders: (block: Record<string, string>) => void (status = "status " + block[":status"]),
+          });
+          stream.closed.catch(() => {});
+          for await (const _ of stream);
+          return status;
+        } catch (error: any) {
+          return "error " + error.code;
+        }
+      }
+      try {
+        await client.opened;
+        const destroyed = await get("/", () => responding.destroy());
+        // A body inside the response's frame makes the client close the whole connection.
+        expect({ destroyed, next: await get("/next") }).toEqual({
+          destroyed: "error ERR_QUIC_STREAM_RESET",
+          next: "status 204",
+        });
+      } finally {
+        closeWith(client, undefined);
       }
     });
   });
