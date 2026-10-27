@@ -7,6 +7,8 @@ const { resistStopPropagation } = require("internal/shared");
 const setImmediateGlobal = globalThis.setImmediate;
 const setTimeoutGlobal = globalThis.setTimeout;
 const setIntervalGlobal = globalThis.setInterval;
+const clearImmediateGlobal = globalThis.clearImmediate;
+const clearTimeoutGlobal = globalThis.clearTimeout;
 const clearIntervalGlobal = globalThis.clearInterval;
 
 type TimerOptions = import("node:timers").TimerOptions;
@@ -50,7 +52,7 @@ function setTimeout(after = 1, value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearTimeout(timeout);
+        clearTimeoutGlobal(timeout);
         reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
@@ -89,7 +91,7 @@ function setImmediate(value?, options: TimerOptions = {}) {
     }
     if (signal) {
       onCancel = () => {
-        clearImmediate(immediate);
+        clearImmediateGlobal(immediate);
         reject($makeAbortError(undefined, { cause: signal.reason }));
       };
       signal.addEventListener("abort", onCancel, resistStopPropagation({ __proto__: null }));
