@@ -725,22 +725,6 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
         }
     }
 
-    pub fn local_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
-        match self.socket {
-            // getsockname() can fail (EBADF/ENOTCONN/…) on a socket the OS
-            // closed or reset underneath us; callers treat that as "no address".
-            InternalSocket::Connected(s) => sock(s).local_address(buf).ok(),
-            _ => None,
-        }
-    }
-
-    pub fn remote_address<'b>(&self, buf: &'b mut [u8]) -> Option<&'b [u8]> {
-        match self.socket {
-            InternalSocket::Connected(s) => sock(s).remote_address(buf).ok(),
-            _ => None,
-        }
-    }
-
     pub fn mark_needs_more_for_sendfile(&self) {
         const { assert!(!IS_SSL, "SSL sockets do not support sendfile yet") };
         if let InternalSocket::Connected(s) = self.socket {

@@ -164,38 +164,6 @@ impl us_socket_t {
         (c::us_socket_remote_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
 
-    /// Returned slice is a view into `buf`.
-    pub(crate) fn local_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_local_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
-        if length < 0 {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
-                bun_errno::last_error() as u16,
-            )));
-        }
-        debug_assert!(buf.len() >= length as usize);
-        Ok(&buf[..usize::try_from(length).expect("int cast")])
-    }
-
-    /// Returned slice is a view into `buf`. On error, `errno` should be set.
-    pub(crate) fn remote_address<'a>(&self, buf: &'a mut [u8]) -> Result<&'a [u8], crate::Error> {
-        let mut length: i32 = i32::try_from(buf.len().min(MAX_I32)).expect("int cast");
-        unsafe {
-            // SAFETY: buf.as_mut_ptr() valid for `length` bytes; length is in/out
-            c::us_socket_remote_address(self, buf.as_mut_ptr(), &raw mut length);
-        }
-        if length < 0 {
-            return Err(crate::Error::Sys(bun_errno::SystemErrno::from_raw(
-                bun_errno::last_error() as u16,
-            )));
-        }
-        debug_assert!(buf.len() >= length as usize);
-        Ok(&buf[..usize::try_from(length).expect("int cast")])
-    }
-
     pub(crate) fn set_timeout(&mut self, seconds: u32) {
         c::us_socket_timeout(self, seconds);
     }
@@ -537,16 +505,6 @@ mod c {
             s: &us_socket_t,
             out: &mut sockaddr_storage,
         ) -> c_int;
-        pub(super) fn us_socket_remote_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
-        );
-        pub(super) fn us_socket_local_address(
-            s: *const us_socket_t,
-            buf: *mut u8,
-            length: *mut i32,
-        );
         pub(super) safe fn us_socket_timeout(s: &mut us_socket_t, seconds: c_uint);
         pub(super) safe fn us_socket_long_timeout(s: &mut us_socket_t, minutes: c_uint);
         pub(super) safe fn us_socket_nodelay(s: &mut us_socket_t, enable: c_int);

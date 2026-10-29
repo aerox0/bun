@@ -1,22 +1,14 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "JSNodeHTTPServerSocket.h"
+#include "JSSocketAddressDTO.h"
 #include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>
 #include <cmath>
-#if OS(WINDOWS)
-#include <winsock2.h>
-#else
-#include <sys/socket.h>
-#endif
 
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
-extern "C" int us_socket_local_sockaddr(us_socket_t*, struct sockaddr_storage* out);
-extern "C" int us_socket_remote_sockaddr(us_socket_t*, struct sockaddr_storage* out);
-// `{ address, family, port }`, with the zone of a link-local address. Throws, and returns an empty value, when the zone has no interface.
-extern "C" JSC::EncodedJSValue Bun__sockaddrToJS(JSC::JSGlobalObject*, const struct sockaddr_storage* addr);
 extern "C" void us_socket_shutdown(us_socket_t*);
 extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
 

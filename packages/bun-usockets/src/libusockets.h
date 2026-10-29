@@ -732,8 +732,6 @@ int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
  * a named pipe, a socket that is closed. */
 int us_socket_local_sockaddr(us_socket_r s, struct sockaddr_storage *nonnull_arg out) nonnull_fn_decl;
 int us_socket_remote_sockaddr(us_socket_r s, struct sockaddr_storage *nonnull_arg out) nonnull_fn_decl;
-void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
-void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 
 int us_socket_ipc_write_fd(us_socket_r s, const char *data, int length, int fd) nonnull_fn_decl;
 void us_socket_sendfile_needs_more(us_socket_r s) nonnull_fn_decl;

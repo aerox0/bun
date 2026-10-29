@@ -96,7 +96,9 @@ pub use bun_uws_sys::{
 // Re-export the `_sys` definitions so higher tiers see one type. `to_js`
 // (`createBunSocketErrorToJS` / `verifyErrorToJS`) live as extension traits
 // in the *_jsc crate.
-pub use bun_uws_sys::{Opcode, SendStatus, create_bun_socket_error_t, us_bun_verify_error_t};
+pub use bun_uws_sys::{
+    Opcode, SendStatus, SocketAddress, create_bun_socket_error_t, us_bun_verify_error_t,
+};
 
 pub use bun_uws_sys::loop_::free_thread_loop;
 
