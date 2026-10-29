@@ -84,8 +84,6 @@ const LONG_HEADER_DCID_LEN_OFFSET: usize = 5;
 const LONG_HEADER_MIN_LEN: usize = 7;
 /// Matches Node's 1200-byte default.
 const DEFAULT_DATAGRAM_FRAME_SIZE: u64 = 1200;
-const IPV4_ADDR_LEN: usize = 4;
-const IPV6_ADDR_LEN: usize = 16;
 /// QUIC CRYPTO_ERROR base (RFC 9001 §4.8) + TLS handshake_failure(40).
 const CRYPTO_ERROR_HANDSHAKE_FAILURE: u64 = 0x0100 + 40;
 const PROVISIONAL_TIMEOUT_NS: u64 = 10_000_000_000;
@@ -1389,18 +1387,13 @@ impl QuicEndpoint {
         }
         self.socket.set(Some(socket));
         let sock = uws::udp::Socket::opaque_mut(socket);
-        let port = sock.bound_port();
-        let mut ip = [0u8; IPV6_ADDR_LEN];
-        let mut len: i32 = ip.len() as i32;
-        sock.bound_ip(ip.as_mut_ptr(), &mut len);
-        let addr = match len as usize {
-            IPV4_ADDR_LEN => {
-                crate::socket::SocketAddress::init_ipv4([ip[0], ip[1], ip[2], ip[3]], port as u16)
-            }
-            IPV6_ADDR_LEN => crate::socket::SocketAddress::init_ipv6(ip, port as u16, 0, 0),
-            _ => crate::socket::SocketAddress::init_ipv4([127, 0, 0, 1], port as u16),
-        };
-        self.local_addr.set(StoredAddr::from_socket_address(&addr));
+        self.local_addr.set(match sock.local_sockaddr() {
+            Some(addr) => StoredAddr::from_raw((&raw const addr).cast(), SOCKADDR_IN6_LEN),
+            None => StoredAddr::from_socket_address(&crate::socket::SocketAddress::init_ipv4(
+                [127, 0, 0, 1],
+                sock.bound_port() as u16,
+            )),
+        });
         self.with_state(|s| {
             s.bound = 1;
             s.receiving = 1;

@@ -28,3 +28,13 @@ export const SocketAddress = b.class({
     },
   },
 });
+
+// `bun:internal-for-testing`
+/** `{ address, family, port }` as a socket prints `host`:`port` when the kernel returns it. `host` is an IP address, and its `%zone` is the scope id. */
+export const formatSocketAddress = b.fn({
+  args: { host: b.string.utf8, port: b.u16 },
+  returns: b.any.returning("object"),
+  capability: "js",
+  throws: true,
+  rustPath: "crate::socket::socket_address::testing_apis::format_socket_address",
+});

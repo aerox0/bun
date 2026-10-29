@@ -4491,7 +4491,7 @@ where
         let info = resp.get_remote_socket_info()?;
         Some(uws::SocketAddress {
             ip: info.ip().to_vec().into_boxed_slice(),
-            port: info.port,
+            port: i32::from(info.port),
             is_ipv6: info.is_ipv6,
         })
     }

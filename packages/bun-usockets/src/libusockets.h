@@ -186,6 +186,10 @@ struct us_udp_packet_buffer_t;
 struct ssl_ctx_st;
 struct ssl_st;
 
+/* <sys/socket.h> / <winsock2.h>. The address getters fill one, so that no field is lost on the way to a formatter:
+ * a link-local address is only usable with its sin6_scope_id. */
+struct sockaddr_storage;
+
 /* Public interface for UDP sockets */
 
 /* Peeks data and length of UDP payload */
@@ -198,6 +202,10 @@ int us_udp_packet_buffer_truncated(struct us_udp_packet_buffer_t *buf, int index
 
 /* Get the bound port in host byte order */
 int us_udp_socket_bound_port(struct us_udp_socket_t *s);
+
+/* getsockname() / getpeername() into `out`. Returns 1 for an AF_INET or AF_INET6 address, 0 otherwise. */
+int us_udp_socket_local_sockaddr(struct us_udp_socket_t *s, struct sockaddr_storage *out);
+int us_udp_socket_remote_sockaddr(struct us_udp_socket_t *s, struct sockaddr_storage *out);
 
 /* Peeks peer addr (sockaddr) of received packet */
 char *us_udp_packet_buffer_peer(struct us_udp_packet_buffer_t *buf, int index);

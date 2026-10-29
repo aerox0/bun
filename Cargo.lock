@@ -2144,6 +2144,7 @@ dependencies = [
  "bstr",
  "bun_alloc",
  "bun_boringssl_sys",
+ "bun_cares_sys",
  "bun_core",
  "bun_errno",
  "bun_http_types",

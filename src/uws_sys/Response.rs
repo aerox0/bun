@@ -13,53 +13,14 @@
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
+use crate::SocketAddress;
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
-use bun_core::{BoundedArray, Fd};
+use bun_core::Fd;
 use bun_ptr::ThisPtr;
 
 // ─── Forward-declared opaques (cycle-break: were `bun_uws::*`, tier > 0) ───
-/// Remote socket address as returned by uWS. The IP text is copied into
-/// inline storage at construction.
-///
-/// Canonical definition moved down from `bun_uws`.
-/// Higher tiers (`bun_uws`, `bun_runtime`) re-export this as
-/// `pub use bun_uws_sys::SocketAddress;`.
-pub struct SocketAddress {
-    ip: BoundedArray<u8, 64>,
-    pub port: i32,
-    pub is_ipv6: bool,
-}
-
-impl SocketAddress {
-    pub(crate) fn new(ip: &[u8], port: i32, is_ipv6: bool) -> SocketAddress {
-        let ip = &ip[..ip.len().min(64)];
-        SocketAddress {
-            ip: BoundedArray::from_slice(ip).expect("clamped to capacity"),
-            port,
-            is_ipv6,
-        }
-    }
-
-    pub fn ip(&self) -> &[u8] {
-        self.ip.as_slice()
-    }
-
-    pub fn is_loopback(&self) -> bool {
-        let ip = self.ip();
-        // IPv4 loopback addresses
-        if ip.starts_with(b"127.") {
-            return true;
-        }
-        // IPv6 loopback addresses
-        if ip.starts_with(b"::ffff:127.") || ip == b"::1" || ip == b"0:0:0:0:0:0:0:1" {
-            return true;
-        }
-        false
-    }
-}
-
 bun_opaque::opaque_ffi! {
     /// Opaque uWS WebSocket socket handle (forward-decl; concrete type lives in `bun_uws`).
     pub struct Socket;

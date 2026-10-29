@@ -212,6 +212,14 @@ export const isOperatingSystemMatch: (operatingSystem: string[]) => boolean = $b
 
 export const createSocketPair = $bindgen("socket_body.bind.ts", "createSocketPair") as () => [number, number];
 
+/**
+ * `{ address, family, port }` as a socket prints `host`:`port` when the kernel returns it from getsockname(),
+ * getpeername() or recvmsg(). `host` is an IP address, and its `%zone` becomes the scope id, so a test needs no
+ * interface that has the address.
+ */
+export const formatSocketAddress: (host: string, port: number) => { address: string; family: string; port: number } =
+  $bindgen("SocketAddress.bind.ts", "formatSocketAddress");
+
 export const isModuleResolveFilenameSlowPathEnabled: () => boolean = $newCppFunction(
   "NodeModuleModule.cpp",
   "jsFunctionIsModuleResolveFilenameSlowPathEnabled",

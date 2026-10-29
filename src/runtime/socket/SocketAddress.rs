@@ -9,13 +9,15 @@ use core::ffi::{c_int, c_void};
 use core::mem;
 
 use bun_cares_sys::c_ares as ares;
-use bun_core::{String as BunString, ZStr, strings};
+use bun_core::{EncodedSlice, String as BunString, ZStr, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CommonString, JSGlobalObject, JSString, JSValue, JsClass, JsError, JsResult, StringJsc,
+    CommonString, EncodedSliceJsc as _, JSGlobalObject, JSString, JSValue, JsClass, JsError,
+    JsResult, StringJsc, SysErrorJsc as _,
 };
 use bun_ptr::JsCell;
+use bun_uws_sys::sockaddr_storage;
 
 pub(crate) struct SocketAddress {
     // NOTE: not C.sockaddr_storage b/c it's _huge_. we need >= 28 bytes for sockaddr_in6,
@@ -489,6 +491,36 @@ impl SocketAddress {
             port_,
             is_ipv6,
         ))
+    }
+}
+
+impl SocketAddress {
+    /// `{ address, family, port }` of an address that the kernel returned (`getsockname()`, `getpeername()`), as
+    /// Node.js's `AddressToJS` builds it: a link-local address has its zone.
+    pub(crate) fn dto_from_sockaddr(
+        global: &JSGlobalObject,
+        addr: &sockaddr_storage,
+    ) -> JsResult<JSValue> {
+        let address = Self::format_sockaddr(global, addr)?;
+        Ok(JSSocketAddressDTO__create(
+            global,
+            EncodedSlice::latin1(address.ip()).to_js(global),
+            address.port,
+            address.is_ipv6,
+        ))
+    }
+
+    /// Throws what Node.js throws when the interface of a link-local address has no name:
+    /// https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L545-L550
+    pub(crate) fn format_sockaddr(
+        global: &JSGlobalObject,
+        addr: &sockaddr_storage,
+    ) -> JsResult<bun_uws_sys::SocketAddress> {
+        bun_uws_sys::SocketAddress::from_sockaddr(addr).map_err(|errno| {
+            global.throw_value(
+                bun_sys::Error::from_code(errno, bun_sys::Tag::uv_if_indextoiid).to_js(global),
+            )
+        })
     }
 }
 
@@ -993,6 +1025,27 @@ fn scope_index(zone: &[u8]) -> u32 {
         idx = idx.wrapping_mul(10).wrapping_add((b - b'0') as u32);
     }
     idx
+}
+
+pub(crate) mod testing_apis {
+    use super::*;
+
+    /// `{ address, family, port }` as a socket prints `host`:`port` when the kernel returns it. The `%zone` of
+    /// `host` becomes the scope id, so no interface needs to have the address.
+    pub(crate) fn format_socket_address(
+        cx: &mut JsScope<'_>,
+        host: &[u8],
+        port: u16,
+    ) -> JsResult<JSValue> {
+        let global = cx.global();
+        let host = bun_core::ZBox::from_bytes(host);
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        // SAFETY: `host` is NUL-terminated and `addr` is a writable `sockaddr_storage`.
+        if unsafe { Bun__parseIpAddress(host.as_ptr(), port, &raw mut addr) } == 0 {
+            return Err(global.throw_invalid_arguments(format_args!("Expected an IP address")));
+        }
+        SocketAddress::dto_from_sockaddr(global, &addr)
+    }
 }
 
 #[cfg(windows)]

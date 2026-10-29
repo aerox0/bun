@@ -1964,6 +1964,33 @@ export function isIPv4() {
   return isIP("IPv4");
 }
 
+let linkLocal: { address: string; zone: string; scoped: string } | null | undefined;
+
+/**
+ * An fe80::/10 address that a socket of this host can bind, and the zone that Node.js prints after it: the name of the
+ * interface, or its index on Windows. `scoped` is `address%zone`. Undefined when no interface has one, as on a host
+ * without IPv6.
+ */
+export function linkLocalIPv6() {
+  if (linkLocal === undefined) {
+    linkLocal = null;
+    for (const [name, addresses] of Object.entries(os.networkInterfaces())) {
+      const found = addresses?.find(a => a.family === "IPv6" && a.address.startsWith("fe80:"));
+      if (!found) continue;
+      const zone = isWindows ? String(found.scopeid) : name;
+      const scoped = `${found.address}%${zone}`;
+      try {
+        Bun.listen({ hostname: scoped, port: 0, socket: { data() {} } }).stop(true);
+      } catch {
+        continue;
+      }
+      linkLocal = { address: found.address, zone, scoped };
+      break;
+    }
+  }
+  return linkLocal ?? undefined;
+}
+
 let glibcVersion: string | undefined;
 
 export function getGlibcVersion() {

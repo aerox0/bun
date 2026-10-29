@@ -1,4 +1,5 @@
 import { udpSocket } from "bun";
+import { formatSocketAddress } from "bun:internal-for-testing";
 import { heapStats } from "bun:jsc";
 import { describe, expect, test } from "bun:test";
 import {
@@ -8,10 +9,12 @@ import {
   expectRssDeltaBelow,
   isIPv6,
   isWindows,
+  linkLocalIPv6,
   randomPort,
   tempDir,
 } from "harness";
 import { closeSync, openSync } from "node:fs";
+import { networkInterfaces } from "node:os";
 import path from "node:path";
 import { dataCases, dataTypes } from "./testdata";
 
@@ -329,6 +332,76 @@ describe("udpSocket()", () => {
       } finally {
         socket.close();
       }
+    }
+  });
+
+  // A link-local address names a peer only together with its interface, so a
+  // socket that prints one without the zone prints an address nothing can use.
+  test.skipIf(!linkLocalIPv6())("address and remoteAddress have the zone of a link-local address", async () => {
+    const { scoped } = linkLocalIPv6()!;
+    const { promise, resolve } = Promise.withResolvers<{ address: string; port: number }>();
+    using server = await udpSocket({
+      hostname: scoped,
+      socket: { data: (_socket, _data, port, address) => resolve({ address, port }) },
+    });
+    expect(server.address).toEqual({ address: scoped, family: "IPv6", port: server.port });
+
+    // The address that the server printed connects to it.
+    using client = await udpSocket({
+      hostname: "::",
+      connect: { hostname: server.address.address, port: server.port },
+    });
+    expect({ remoteAddress: client.remoteAddress, address: client.address }).toEqual({
+      remoteAddress: { address: scoped, family: "IPv6", port: server.port },
+      address: { address: scoped, family: "IPv6", port: client.port },
+    });
+    client.send("hello");
+    expect(await promise).toEqual({ address: scoped, port: client.port });
+  });
+
+  // The rule of every socket address, on addresses that no interface of the host needs to have:
+  // https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L520-L596
+  test("only a link-local address with a scope id is printed with a zone", () => {
+    // "lo" or "lo0". On Windows a zone is the index of an interface, and any index prints.
+    const zone = isWindows
+      ? "1"
+      : Object.entries(networkInterfaces()).find(([, addresses]) => addresses?.some(a => a.internal))![0];
+    const printed = (host: string) => formatSocketAddress(host, 4321);
+    const ipv6 = (address: string) => ({ address, family: "IPv6", port: 4321 });
+
+    expect({
+      linkLocal: printed(`fe80::1%${zone}`),
+      endOfLinkLocal: printed(`febf:ffff::1%${zone}`),
+      linkLocalWithoutScope: printed("fe80::1"),
+      siteLocal: printed(`fec0::1%${zone}`),
+      linkLocalMulticast: printed(`ff02::1%${zone}`),
+      loopback: printed(`::1%${zone}`),
+      mapped: printed(`::ffff:127.0.0.1%${zone}`),
+      any: printed("::"),
+      ipv4: printed("127.0.0.1"),
+    }).toEqual({
+      linkLocal: ipv6(`fe80::1%${zone}`),
+      endOfLinkLocal: ipv6(`febf:ffff::1%${zone}`),
+      linkLocalWithoutScope: ipv6("fe80::1"),
+      siteLocal: ipv6("fec0::1"),
+      linkLocalMulticast: ipv6("ff02::1"),
+      loopback: ipv6("::1"),
+      mapped: ipv6("::ffff:127.0.0.1"),
+      any: ipv6("::"),
+      ipv4: { address: "127.0.0.1", family: "IPv4", port: 4321 },
+    });
+
+    // An interface that is gone has no name. Node.js throws what libuv's uv_if_indextoiid() returned.
+    if (isWindows) {
+      expect(printed("fe80::1%2147483647")).toEqual(ipv6("fe80::1%2147483647"));
+    } else {
+      expect(() => printed("fe80::1%2147483647")).toThrow(
+        expect.objectContaining({
+          code: "ENXIO",
+          syscall: "uv_if_indextoiid",
+          message: "ENXIO: no such device or address, uv_if_indextoiid",
+        }),
+      );
     }
   });
 
