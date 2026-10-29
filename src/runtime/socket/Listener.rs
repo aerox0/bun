@@ -21,7 +21,7 @@ use bun_uws_sys as uws_sys;
 use crate::api::bun_secure_context::SecureContext;
 use crate::generated_bindgen::listener::js_Listener as js;
 use crate::socket::{
-    Handlers, NewSocket, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
+    Handlers, NewSocket, SocketAddress, SocketConfig, SocketFlags, SocketMode, TCPSocket, TLSSocket,
 };
 use crate::socket::{SSLConfig, SSLConfigFromJs};
 
@@ -1348,50 +1348,11 @@ impl Listener {
             return Err(global.throw_invalid_arguments(format_args!("Expected object")));
         }
 
-        let mut buf = [0u8; 64];
-        let mut text_buf = [0u8; 512];
         // S008: `ListenSocket` is an `opaque_ffi!` ZST — safe deref.
-        let socket_ref = bun_opaque::opaque_deref_mut(socket);
-        let address_bytes: &[u8] = match socket_ref.get_local_address(&mut buf) {
-            Ok(b) => b,
-            Err(_) => return Ok(()),
-        };
-        let is_ipv6 = match address_bytes.len() {
-            4 => false,
-            16 => true,
-            _ => return Ok(()),
-        };
-        // Format with `SocketAddrV{4,6}` so `format_ip`'s strip logic sees the
-        // expected `addr:port` / `[addr]:port` shape.
-        let formatted: &[u8] = match address_bytes.len() {
-            4 => bun_core::fmt::format_ip(
-                &std::net::SocketAddrV4::new(
-                    std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
-                    0,
-                ),
-                &mut text_buf,
-            )
-            .unwrap(),
-            16 => bun_core::fmt::format_ip(
-                &std::net::SocketAddrV6::new(
-                    std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()),
-                    0,
-                    0,
-                    0,
-                ),
-                &mut text_buf,
-            )
-            .unwrap(),
-            _ => return Ok(()),
-        };
-        let address_js = EncodedSlice::latin1(formatted).to_js(global);
-        let port_js = match socket_ref.get_local_port() {
-            Some(p) => JSValue::js_number(p as f64),
-            None => JSValue::UNDEFINED,
-        };
-
-        bun_jsc::cpp::JSSocketAddressDTO__assign(global, out, address_js, port_js, is_ipv6)?;
-        Ok(())
+        match bun_opaque::opaque_deref_mut(socket).local_sockaddr() {
+            Some(addr) => SocketAddress::assign_from_sockaddr(global, out, &addr),
+            None => Ok(()),
+        }
     }
 }
 

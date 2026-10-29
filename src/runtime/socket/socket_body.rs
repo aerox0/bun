@@ -12,14 +12,12 @@ use bun_io::KeepAlive;
 use bun_jsc::EncodedSliceJsc as _;
 use bun_jsc::JsCell;
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsScope};
-use bun_jsc::bun_string_jsc;
 use bun_ptr::RefPtr;
 // do NOT `use bun_boringssl_sys::SSL` here — it shadows the
 // `const SSL: bool` generic param in `NewSocket<SSL>` below, making rustc
 // resolve `<SSL>` as a type arg (E0747). Use the qualified path instead.
 use bun_boringssl_sys::SSL_CTX;
 use bun_collections::VecExt;
-use bun_core::{self, fmt as bun_fmt};
 use bun_jsc::SysErrorJsc;
 use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError};
 // `bun_jsc::VirtualMachine` is the *module* (alias of `virtual_machine`); name the
@@ -27,7 +25,7 @@ use bun_jsc::{self as jsc, JSGlobalObject, JSValue, JsRef, JsResult, SystemError
 use super::upgraded_duplex::{Handlers as UpgradedDuplexHandlers, UpgradedDuplex};
 use crate::crypto::boringssl_jsc::err_to_js as boringssl_err_to_js;
 use crate::node::{BlobOrStringOrBuffer, StringObjects, StringOrBuffer};
-use crate::socket::{SSLConfig, SSLConfigFromJs};
+use crate::socket::{SSLConfig, SSLConfigFromJs, SocketAddress};
 use bun_boringssl_sys as boringssl_sys;
 use bun_cares_sys::c_ares_draft as c_ares;
 use bun_core::String as BunString;
@@ -46,6 +44,15 @@ fn from_duplex<const SSL: bool>(duplex: &UpgradedDuplex) -> uws::NewSocketHandle
             .cast_mut()
             .cast(),
     )
+}
+
+/// `"IPv4"` or `"IPv6"`. `undefined` for a socket with no IP address: a detached one, a unix socket, a named pipe.
+fn family_to_js(global: &JSGlobalObject, addr: Option<bun_uws_sys::sockaddr_storage>) -> JSValue {
+    match addr {
+        Some(addr) if bun_uws_sys::sockaddr_is_ipv6(&addr) => global.common_strings().ipv6(),
+        Some(_) => global.common_strings().ipv4(),
+        None => JSValue::UNDEFINED,
+    }
 }
 
 /// Shorthand for the JS-side `EventLoopCtx` (replaces direct VM passing to
@@ -2442,54 +2449,14 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn get_local_family(&self, cx: &mut JsScope<'_>) -> JSValue {
-        let global = cx.global();
-        if self.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
-        }
-
-        let mut buf = [0u8; 64];
-        let Some(address_bytes) = self.socket.get().local_address(&mut buf) else {
-            return JSValue::UNDEFINED;
-        };
-        match address_bytes.len() {
-            4 => global.common_strings().ipv4(),
-            16 => global.common_strings().ipv6(),
-            _ => JSValue::UNDEFINED,
-        }
+        family_to_js(cx.global(), self.socket.get().local_sockaddr())
     }
 
     pub(crate) fn get_local_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        if self.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+        match self.socket.get().local_sockaddr() {
+            Some(addr) => SocketAddress::address_from_sockaddr(cx.global(), &addr),
+            None => Ok(JSValue::UNDEFINED),
         }
-
-        let mut buf = [0u8; 64];
-        let mut text_buf = [0u8; 512];
-
-        let Some(address_bytes) = self.socket.get().local_address(&mut buf) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        // `format_ip` expects `addr:port` / `[addr]:port` shape (it strips
-        // `:port` and brackets), so pass a `SocketAddr` — bare `IpAddr` corrupts IPv6.
-        let address: std::net::SocketAddr = match address_bytes.len() {
-            4 => std::net::SocketAddrV4::new(
-                std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
-                0,
-            )
-            .into(),
-            16 => std::net::SocketAddrV6::new(
-                std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()),
-                0,
-                0,
-                0,
-            )
-            .into(),
-            _ => return Ok(JSValue::UNDEFINED),
-        };
-
-        let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub(crate) fn get_local_port(&self) -> Option<u16> {
@@ -2497,52 +2464,14 @@ impl<const SSL: bool> NewSocket<SSL> {
     }
 
     pub(crate) fn get_remote_family(&self, cx: &mut JsScope<'_>) -> JSValue {
-        let global = cx.global();
-        if self.socket.get().is_detached() {
-            return JSValue::UNDEFINED;
-        }
-
-        let mut buf = [0u8; 64];
-        let Some(address_bytes) = self.socket.get().remote_address(&mut buf) else {
-            return JSValue::UNDEFINED;
-        };
-        match address_bytes.len() {
-            4 => global.common_strings().ipv4(),
-            16 => global.common_strings().ipv6(),
-            _ => JSValue::UNDEFINED,
-        }
+        family_to_js(cx.global(), self.socket.get().remote_sockaddr())
     }
 
     pub(crate) fn get_remote_address(&self, cx: &mut JsScope<'_>) -> JsResult<JSValue> {
-        let global = cx.global();
-        if self.socket.get().is_detached() {
-            return Ok(JSValue::UNDEFINED);
+        match self.socket.get().remote_sockaddr() {
+            Some(addr) => SocketAddress::address_from_sockaddr(cx.global(), &addr),
+            None => Ok(JSValue::UNDEFINED),
         }
-
-        let mut buf = [0u8; 64];
-        let mut text_buf = [0u8; 512];
-
-        let Some(address_bytes) = self.socket.get().remote_address(&mut buf) else {
-            return Ok(JSValue::UNDEFINED);
-        };
-        let address: std::net::SocketAddr = match address_bytes.len() {
-            4 => std::net::SocketAddrV4::new(
-                std::net::Ipv4Addr::from(<[u8; 4]>::try_from(address_bytes).unwrap()),
-                0,
-            )
-            .into(),
-            16 => std::net::SocketAddrV6::new(
-                std::net::Ipv6Addr::from(<[u8; 16]>::try_from(address_bytes).unwrap()),
-                0,
-                0,
-                0,
-            )
-            .into(),
-            _ => return Ok(JSValue::UNDEFINED),
-        };
-
-        let text = bun_fmt::format_ip(&address, &mut text_buf).expect("unreachable");
-        bun_string_jsc::create_utf8_for_js(global, text)
     }
 
     pub(crate) fn get_remote_port(&self) -> Option<u16> {

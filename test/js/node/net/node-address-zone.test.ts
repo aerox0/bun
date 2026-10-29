@@ -16,6 +16,7 @@
 import assert from "node:assert";
 import dgram from "node:dgram";
 import { once } from "node:events";
+import net from "node:net";
 import os from "node:os";
 import { describe, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -152,6 +153,77 @@ describe("node:dgram", () => {
       } finally {
         client.close();
         server.close();
+      }
+    });
+  }
+});
+
+describe("node:net", () => {
+  const addressesOf = (socket: net.Socket) => ({
+    remoteAddress: socket.remoteAddress,
+    remoteFamily: socket.remoteFamily,
+    remotePort: socket.remotePort,
+    localAddress: socket.localAddress,
+    localPort: socket.localPort,
+    address: socket.address(),
+  });
+
+  async function connected(host: string) {
+    const server = net.createServer();
+    server.listen(0, host);
+    await once(server, "listening");
+    const listening = server.address() as net.AddressInfo;
+    const connection = once(server, "connection") as Promise<[net.Socket]>;
+    // The address that the server printed connects to it.
+    const client = net.connect(listening.port, listening.address);
+    await once(client, "connect");
+    const [accepted] = await connection;
+    return {
+      listening,
+      client,
+      accepted,
+      close() {
+        client.destroy();
+        accepted.destroy();
+        server.close();
+      },
+    };
+  }
+
+  for (const [name, host, family, skip] of [
+    ["a link-local address, with the zone", linkLocal?.scoped, "IPv6", !linkLocal],
+    ["127.0.0.1", "127.0.0.1", "IPv4", false],
+    ["::1", "::1", "IPv6", !hasIPv6Loopback],
+  ] as const) {
+    test(`every address of a connection over ${name}`, { skip }, async () => {
+      const { listening, client, accepted, close } = await connected(host!);
+      try {
+        const port = listening.port;
+        const clientPort = client.localPort!;
+        assert.deepStrictEqual(
+          { listening, client: addressesOf(client), accepted: addressesOf(accepted) },
+          {
+            listening: { address: host, family, port },
+            client: {
+              remoteAddress: host,
+              remoteFamily: family,
+              remotePort: port,
+              localAddress: host,
+              localPort: clientPort,
+              address: { address: host, family, port: clientPort },
+            },
+            accepted: {
+              remoteAddress: host,
+              remoteFamily: family,
+              remotePort: clientPort,
+              localAddress: host,
+              localPort: port,
+              address: { address: host, family, port },
+            },
+          },
+        );
+      } finally {
+        close();
       }
     });
   }

@@ -53,6 +53,14 @@ void us_connecting_socket_shutdown_read(struct us_connecting_socket_t *c) {
     c->shutdown_read = 1;
 }
 
+int us_socket_local_sockaddr(struct us_socket_t *s, struct sockaddr_storage *out) {
+    return bsd_local_sockaddr(us_poll_fd(&s->p), out);
+}
+
+int us_socket_remote_sockaddr(struct us_socket_t *s, struct sockaddr_storage *out) {
+    return bsd_remote_sockaddr(us_poll_fd(&s->p), out);
+}
+
 void us_socket_remote_address(struct us_socket_t *s, char *buf, int *length) {
     struct bsd_addr_t addr;
     if (bsd_remote_addr(us_poll_fd(&s->p), &addr) || *length < bsd_addr_get_ip_length(&addr)) {

@@ -1,6 +1,6 @@
-import { connect, listen, SocketHandler, TCPSocketListener } from "bun";
+import { connect, listen, type Socket, SocketHandler, TCPSocketListener } from "bun";
 import { describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, linkLocalIPv6 } from "harness";
 import { join } from "node:path";
 
 type Resolve = (value?: unknown) => void;
@@ -56,6 +56,42 @@ it("remoteAddress works", async () => {
     port: server.port,
   });
   await prom;
+});
+
+// A link-local address names a peer only together with its interface, so a
+// socket that prints one without the zone prints an address nothing can use.
+it.skipIf(!linkLocalIPv6())("remoteAddress and localAddress have the zone of a link-local address", async () => {
+  const { scoped } = linkLocalIPv6()!;
+  const addressesOf = (socket: Socket) => ({
+    remoteAddress: socket.remoteAddress,
+    remoteFamily: socket.remoteFamily,
+    localAddress: socket.localAddress,
+    localFamily: socket.localFamily,
+  });
+  const accepted = Promise.withResolvers<ReturnType<typeof addressesOf>>();
+  using server = Bun.listen({
+    hostname: scoped,
+    port: 0,
+    socket: {
+      open: socket => accepted.resolve(addressesOf(socket)),
+      data() {},
+    },
+  });
+  const client = await Bun.connect({ hostname: scoped, port: server.port, socket: { data() {} } });
+  try {
+    const expected = { remoteAddress: scoped, remoteFamily: "IPv6", localAddress: scoped, localFamily: "IPv6" };
+    expect({ client: addressesOf(client), accepted: await accepted.promise }).toEqual({
+      client: expected,
+      accepted: expected,
+    });
+
+    // The address that a socket printed connects.
+    const again = await Bun.connect({ hostname: client.remoteAddress, port: server.port, socket: { data() {} } });
+    expect(again.remoteAddress).toBe(scoped);
+    again.end();
+  } finally {
+    client.end();
+  }
 });
 
 it("should not allow invalid tls option", () => {

@@ -510,6 +510,31 @@ impl SocketAddress {
         ))
     }
 
+    /// The `address` of [`Self::dto_from_sockaddr`] alone.
+    pub(crate) fn address_from_sockaddr(
+        global: &JSGlobalObject,
+        addr: &sockaddr_storage,
+    ) -> JsResult<JSValue> {
+        let address = Self::format_sockaddr(global, addr)?;
+        Ok(EncodedSlice::latin1(address.ip()).to_js(global))
+    }
+
+    /// Node.js's `AddressToJS(env, addr, out)`: sets `address`, `family` and `port` of the object `out`.
+    pub(crate) fn assign_from_sockaddr(
+        global: &JSGlobalObject,
+        out: JSValue,
+        addr: &sockaddr_storage,
+    ) -> JsResult<()> {
+        let address = Self::format_sockaddr(global, addr)?;
+        bun_jsc::cpp::JSSocketAddressDTO__assign(
+            global,
+            out,
+            EncodedSlice::latin1(address.ip()).to_js(global),
+            JSValue::js_number(f64::from(address.port)),
+            address.is_ipv6,
+        )
+    }
+
     /// Throws what Node.js throws when the interface of a link-local address has no name:
     /// https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L545-L550
     pub(crate) fn format_sockaddr(

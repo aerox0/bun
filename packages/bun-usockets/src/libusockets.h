@@ -728,6 +728,10 @@ struct us_socket_t *us_socket_close_now(us_socket_r s) nonnull_fn_decl;
 
 int us_socket_local_port(us_socket_r s) nonnull_fn_decl;
 int us_socket_remote_port(us_socket_r s) nonnull_fn_decl;
+/* getsockname() / getpeername() into `out`. Returns 1 for an AF_INET or AF_INET6 address, 0 otherwise: a unix socket,
+ * a named pipe, a socket that is closed. */
+int us_socket_local_sockaddr(us_socket_r s, struct sockaddr_storage *nonnull_arg out) nonnull_fn_decl;
+int us_socket_remote_sockaddr(us_socket_r s, struct sockaddr_storage *nonnull_arg out) nonnull_fn_decl;
 void us_socket_remote_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 void us_socket_local_address(us_socket_r s, char *nonnull_arg buf, int *nonnull_arg length) nonnull_fn_decl;
 

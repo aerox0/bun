@@ -16,6 +16,11 @@ use libc::{AF_INET, AF_INET6, sockaddr_in, sockaddr_in6};
 /// Node.js reserves `INET6_ADDRSTRLEN + UV_IF_NAMESIZE` (63) bytes for an address and its zone.
 const TEXT_CAPACITY: usize = 64;
 
+/// Whether `addr`, which is `AF_INET` or `AF_INET6`, is the latter.
+pub fn sockaddr_is_ipv6(addr: &sockaddr_storage) -> bool {
+    c_int::from(addr.ss_family) == AF_INET6
+}
+
 /// An IP address as text, and its port.
 pub struct SocketAddress {
     text: [u8; TEXT_CAPACITY],

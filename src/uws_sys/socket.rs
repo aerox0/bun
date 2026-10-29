@@ -22,7 +22,7 @@ use crate::WindowsNamedPipe;
 use crate::{
     CloseCode, ConnectResult, ConnectingSocket, LIBUS_SOCKET_ALLOW_HALF_OPEN,
     LIBUS_SOCKET_DESCRIPTOR, QueuedInput, SocketGroup, SocketKind, SslCtx, UpgradedDuplex,
-    us_bun_verify_error_t, us_socket_t,
+    sockaddr_storage, us_bun_verify_error_t, us_socket_t,
 };
 
 bun_core::declare_scope!(uws, visible);
@@ -705,6 +705,22 @@ impl<const IS_SSL: bool> NewSocketHandler<IS_SSL> {
     pub fn remote_port(&self) -> Option<u16> {
         match self.socket {
             InternalSocket::Connected(s) => sock(s).remote_port(),
+            _ => None,
+        }
+    }
+
+    /// `None` for a socket that is not connected over IP, and when `getsockname()` fails.
+    pub fn local_sockaddr(&self) -> Option<sockaddr_storage> {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).local_sockaddr(),
+            _ => None,
+        }
+    }
+
+    /// `None` for a socket that is not connected over IP, and when `getpeername()` fails.
+    pub fn remote_sockaddr(&self) -> Option<sockaddr_storage> {
+        match self.socket {
+            InternalSocket::Connected(s) => sock(s).remote_sockaddr(),
             _ => None,
         }
     }

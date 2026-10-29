@@ -3,7 +3,10 @@ use core::ptr::{self, NonNull};
 
 use bun_core::Fd;
 
-use crate::{LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, us_bun_verify_error_t};
+use crate::{
+    LIBUS_SOCKET_DESCRIPTOR, SocketGroup, SocketKind, SslCtx, sockaddr_storage,
+    us_bun_verify_error_t,
+};
 
 bun_core::declare_scope!(uws, visible);
 
@@ -147,6 +150,18 @@ impl us_socket_t {
     /// `None` when `getpeername()` fails or the address family has no port.
     pub(crate) fn remote_port(&self) -> Option<u16> {
         u16::try_from(c::us_socket_remote_port(self)).ok()
+    }
+
+    /// `getsockname()`. `None` when the call fails, and for a socket that is not `AF_INET` or `AF_INET6`.
+    pub(crate) fn local_sockaddr(&self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (c::us_socket_local_sockaddr(self, &mut addr) != 0).then_some(addr)
+    }
+
+    /// `getpeername()`, as [`Self::local_sockaddr`].
+    pub(crate) fn remote_sockaddr(&self) -> Option<sockaddr_storage> {
+        let mut addr: sockaddr_storage = bun_core::ffi::zeroed();
+        (c::us_socket_remote_sockaddr(self, &mut addr) != 0).then_some(addr)
     }
 
     /// Returned slice is a view into `buf`.
@@ -514,6 +529,14 @@ mod c {
 
         pub(super) safe fn us_socket_local_port(s: &us_socket_t) -> i32;
         pub(super) safe fn us_socket_remote_port(s: &us_socket_t) -> i32;
+        pub(super) safe fn us_socket_local_sockaddr(
+            s: &us_socket_t,
+            out: &mut sockaddr_storage,
+        ) -> c_int;
+        pub(super) safe fn us_socket_remote_sockaddr(
+            s: &us_socket_t,
+            out: &mut sockaddr_storage,
+        ) -> c_int;
         pub(super) fn us_socket_remote_address(
             s: *const us_socket_t,
             buf: *mut u8,
