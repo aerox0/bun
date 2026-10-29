@@ -542,7 +542,7 @@ pub use listen_socket::ListenSocket;
 pub use request::{AnyRequest, Request};
 pub use response::c::uws_res;
 pub use response::{AnyResponse, WebSocketUpgradeContext};
-pub use socket_address::{SocketAddress, sockaddr_is_ipv6, sockaddr_storage};
+pub use socket_address::{SocketAddress, sockaddr_is_ipv6, sockaddr_is_loopback, sockaddr_storage};
 pub use socket_context::BunSocketContextOptions;
 pub use socket_group::ConnectResult;
 pub use socket_group::SocketGroup;

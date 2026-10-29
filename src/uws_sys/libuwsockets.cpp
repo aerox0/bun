@@ -7,7 +7,6 @@
 #include <string_view>
 #include <type_traits>
 
-
 #define uws_res_r uws_res_t* nonnull_arg
 static inline std::string_view stringViewFromC(const char* message, size_t length) {
   if(length) {

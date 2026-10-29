@@ -2342,7 +2342,7 @@ where
             && (!bake::is_allowed_host_header(req, Some(&self.config.get().address))
                 || !resp
                     .remote_sockaddr()
-                    .is_some_and(|addr| uws_sys::SocketAddress::sockaddr_is_loopback(&addr)))
+                    .is_some_and(|addr| uws_sys::sockaddr_is_loopback(&addr)))
         {
             req.set_yield(true);
             return;
@@ -3027,7 +3027,7 @@ where
 
             if resp
                 .remote_sockaddr()
-                .is_some_and(|addr| uws_sys::SocketAddress::sockaddr_is_loopback(&addr))
+                .is_some_and(|addr| uws_sys::sockaddr_is_loopback(&addr))
             {
                 break 'brk true;
             }

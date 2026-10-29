@@ -21,6 +21,21 @@ pub fn sockaddr_is_ipv6(addr: &sockaddr_storage) -> bool {
     c_int::from(addr.ss_family) == AF_INET6
 }
 
+/// Whether `addr` is a loopback address: 127.0.0.0/8, also as an IPv4-mapped address, or ::1.
+pub fn sockaddr_is_loopback(addr: &sockaddr_storage) -> bool {
+    let (address, _) = SocketAddress::without_zone(addr);
+    let ip = address.ip();
+    // IPv4 loopback addresses
+    if ip.starts_with(b"127.") {
+        return true;
+    }
+    // IPv6 loopback addresses
+    if ip.starts_with(b"::ffff:127.") || ip == b"::1" || ip == b"0:0:0:0:0:0:0:1" {
+        return true;
+    }
+    false
+}
+
 /// An IP address as text, and its port.
 pub struct SocketAddress {
     text: [u8; TEXT_CAPACITY],
@@ -136,20 +151,5 @@ impl SocketAddress {
 
     pub fn ip(&self) -> &[u8] {
         &self.text[..usize::from(self.len)]
-    }
-
-    /// Whether `addr` is a loopback address: 127.0.0.0/8, also as an IPv4-mapped address, or ::1.
-    pub fn sockaddr_is_loopback(addr: &sockaddr_storage) -> bool {
-        let (address, _) = Self::without_zone(addr);
-        let ip = address.ip();
-        // IPv4 loopback addresses
-        if ip.starts_with(b"127.") {
-            return true;
-        }
-        // IPv6 loopback addresses
-        if ip.starts_with(b"::ffff:127.") || ip == b"::1" || ip == b"0:0:0:0:0:0:0:1" {
-            return true;
-        }
-        false
     }
 }
