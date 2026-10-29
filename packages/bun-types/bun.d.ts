@@ -5178,6 +5178,13 @@ declare module "bun" {
   interface SocketAddress {
     /**
      * The IP address of the client.
+     *
+     * A link-local IPv6 address (`fe80::/10`) has its zone: the name of the
+     * interface, or the index of the interface on Windows. A socket reaches
+     * such an address only through that interface, so the address connects
+     * only with its zone.
+     *
+     * @example "192.168.1.100" | "2001:db8::1" | "fe80::1%eth0"
      */
     address: string;
 
@@ -7281,7 +7288,10 @@ declare module "bun" {
 
     /**
      * Remote IP address connected to the socket
-     * @example "192.168.1.100" | "2001:db8::1"
+     *
+     * A link-local IPv6 address (`fe80::/10`) has its zone: the name of the
+     * interface, or the index of the interface on Windows.
+     * @example "192.168.1.100" | "2001:db8::1" | "fe80::1%eth0"
      */
     readonly remoteAddress: string;
 
@@ -7299,7 +7309,10 @@ declare module "bun" {
 
     /**
      * Local IP address connected to the socket
-     * @example "192.168.1.100" | "2001:db8::1"
+     *
+     * A link-local IPv6 address (`fe80::/10`) has its zone: the name of the
+     * interface, or the index of the interface on Windows.
+     * @example "192.168.1.100" | "2001:db8::1" | "fe80::1%eth0"
      */
     readonly localAddress: string;
 

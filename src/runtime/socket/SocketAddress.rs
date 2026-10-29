@@ -459,7 +459,7 @@ impl SocketAddress {
 
     /// Throws what Node.js throws when the interface of a link-local address has no name:
     /// https://github.com/nodejs/node/blob/v26.3.0/src/tcp_wrap.cc#L545-L550
-    pub(crate) fn format_sockaddr(
+    fn format_sockaddr(
         global: &JSGlobalObject,
         addr: &sockaddr_storage,
     ) -> JsResult<bun_uws_sys::SocketAddress> {

@@ -118,13 +118,16 @@ impl SocketAddress {
 
     fn append_zone_index(&mut self, scope_id: u32) {
         use std::io::Write as _;
-        let mut unwritten = &mut self.text[usize::from(self.len)..];
-        let capacity = unwritten.len();
-        // Only a link-local address gets here. It has at most 39 bytes, so `%` and ten digits fit.
+        // `%` and the ten digits of `u32::MAX`.
+        let mut zone = [0u8; 11];
+        let capacity = zone.len();
+        let mut unwritten = &mut zone[..];
         let _ = write!(unwritten, "%{scope_id}");
-        self.len += (capacity - unwritten.len()) as u8;
+        let len = capacity - unwritten.len();
+        self.append(&zone[..len]);
     }
 
+    /// Only a link-local address gets a zone. It has at most 39 bytes, so a zone always fits.
     fn append(&mut self, bytes: &[u8]) {
         let len = usize::from(self.len);
         self.text[len..len + bytes.len()].copy_from_slice(bytes);

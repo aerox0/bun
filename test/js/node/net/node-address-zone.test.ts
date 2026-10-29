@@ -104,8 +104,9 @@ describe("node:dgram", () => {
     }
   });
 
-  // The kernel reports the scope id of a link-local multicast peer too. Only fe80::/10 gets a zone.
-  test("a multicast peer with a scope id has no zone", { skip: !linkLocal }, async () => {
+  // Linux reports the scope id of a link-local multicast peer too. Only fe80::/10 gets a zone.
+  const reportsMulticastScope = linkLocal !== undefined && process.platform === "linux";
+  test("a multicast peer with a scope id has no zone", { skip: !reportsMulticastScope }, async () => {
     const socket = dgram.createSocket("udp6");
     try {
       await connect(socket, 4321, `ff02::1%${linkLocal!.zone}`);
