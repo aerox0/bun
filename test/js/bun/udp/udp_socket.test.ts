@@ -391,15 +391,18 @@ describe("udpSocket()", () => {
       ipv4: { address: "127.0.0.1", family: "IPv4", port: 4321 },
     });
 
-    // An interface that is gone has no name. Node.js throws what libuv's uv_if_indextoiid() returned.
+    // An interface that is gone has no name. Node.js throws what libuv's uv_if_indextoiid() returned: the errno of
+    // if_indextoname(), which is ENXIO, or ENODEV where the libc passes on the error of the ioctl.
     if (isWindows) {
       expect(printed("fe80::1%2147483647")).toEqual(ipv6("fe80::1%2147483647"));
     } else {
       expect(() => printed("fe80::1%2147483647")).toThrow(
         expect.objectContaining({
-          code: "ENXIO",
+          code: expect.stringMatching(/^(ENXIO|ENODEV)$/),
           syscall: "uv_if_indextoiid",
-          message: "ENXIO: no such device or address, uv_if_indextoiid",
+          message: expect.stringMatching(
+            /^(ENXIO: no such device or address|ENODEV: no such device), uv_if_indextoiid$/,
+          ),
         }),
       );
     }
