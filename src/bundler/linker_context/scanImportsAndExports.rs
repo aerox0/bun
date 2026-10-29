@@ -1309,10 +1309,10 @@ pub(crate) fn scan_imports_and_exports(
                 let mut re_export_uses: u32 = 0;
 
                 for import_record_index in col_ref!(export_star_import_records)[id].iter() {
-                    let (rec_source_index,) = {
+                    let (rec_source_index, rec_is_disabled) = {
                         let record = &col_ref!(import_records_list)[id].as_slice()
                             [*import_record_index as usize];
-                        (record.source_index,)
+                        (record.source_index, record.path.is_disabled)
                     };
 
                     // `convert_stmts_for_chunk` prints a wrapped lifted file's export star as
@@ -1384,10 +1384,16 @@ pub(crate) fn scan_imports_and_exports(
                             Index::source(source_index),
                         )?;
                         col!(ast_flags_list)[id].insert(AstFlags::USES_EXPORTS_REF);
-                        col!(import_records_list)[id].as_mut_slice()[*import_record_index as usize]
-                            .flags
-                            .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
-                        re_export_uses += 1;
+                        // A disabled record has no module behind it, so it re-exports
+                        // nothing. A name that is read through the star still reads
+                        // this file's "exports" object.
+                        if !rec_is_disabled {
+                            col!(import_records_list)[id].as_mut_slice()
+                                [*import_record_index as usize]
+                                .flags
+                                .insert(ImportRecordFlags::CALLS_RUNTIME_RE_EXPORT_FN);
+                            re_export_uses += 1;
+                        }
                     }
                 }
 
