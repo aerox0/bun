@@ -345,7 +345,8 @@ function getUnpackedSettings(buf?: any, options?: any): any {
   return settings;
 }
 
-const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
+const http2util = require("internal/quic/http2util");
+const sensitiveHeaders: typeof http2util.kSensitiveHeaders = http2util.kSensitiveHeaders;
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
 
 const bunHTTP2Socket = Symbol.for("::bunhttp2socket::");
@@ -3958,25 +3959,37 @@ function headerValueIsUnsendable(value: unknown): boolean {
   return false;
 }
 
+// Returns the headers object of a received block `[raw list, headers, never-indexed names]`, and leaves the raw list that matches it in `headersTuple[0]`.
 // RFC 9113 §8.2.1: a field value must not start or end with SP or HTAB. With strict validation
 // (the default) such received fields are ignored; strictFieldWhitespaceValidation: false keeps them.
-function stripInvalidWhitespaceFields(rawheaders: string[]): string[] {
-  let filtered: string[] | null = null;
-  for (let i = 0; i < rawheaders.length; i += 2) {
-    const value = rawheaders[i + 1];
-    let bad = false;
-    if (typeof value === "string" && value.length > 0) {
-      const first = value.charCodeAt(0);
-      const last = value.charCodeAt(value.length - 1);
-      bad = first === 32 || first === 9 || last === 32 || last === 9;
+function receivedHeaders(headersTuple: [string[], HeadersObject, string[] | undefined], strict: boolean) {
+  let headers = headersTuple[1];
+  if (strict) {
+    const rawheaders = headersTuple[0];
+    let filtered: string[] | null = null;
+    for (let i = 0; i < rawheaders.length; i += 2) {
+      const value = rawheaders[i + 1];
+      let bad = false;
+      if (typeof value === "string" && value.length > 0) {
+        const first = value.charCodeAt(0);
+        const last = value.charCodeAt(value.length - 1);
+        bad = first === 32 || first === 9 || last === 32 || last === 9;
+      }
+      if (bad) {
+        if (filtered === null) filtered = rawheaders.slice(0, i);
+      } else if (filtered !== null) {
+        filtered.push(rawheaders[i], value);
+      }
     }
-    if (bad) {
-      if (filtered === null) filtered = rawheaders.slice(0, i);
-    } else if (filtered !== null) {
-      filtered.push(rawheaders[i], value);
+    // The object from the parser has every field, so it is correct only when no field was dropped (the common case).
+    if (filtered !== null) {
+      headersTuple[0] = filtered;
+      headers = toHeaderObject(filtered);
     }
   }
-  return filtered === null ? rawheaders : filtered;
+  // The parser does not write this key. This line is the only writer, for both objects.
+  headers[sensitiveHeaders] = headersTuple[2] || [];
+  return headers;
 }
 //TODO: do this in C++
 
@@ -4040,8 +4053,8 @@ function buildSensitiveNames(
   return map;
 }
 
-function toHeaderObject(headers, sensitiveHeadersValue) {
-  const obj = { __proto__: null, [sensitiveHeaders]: sensitiveHeadersValue };
+function toHeaderObject(headers) {
+  const obj = { __proto__: null };
   for (let n = 0; n < headers.length; n += 2) {
     const name = headers[n];
     let value = headers[n + 1] || "";
@@ -4289,17 +4302,8 @@ class ServerHttp2Session extends Http2Session {
       if (requestPerf !== undefined && requestPerf.firstHeader === 0) {
         requestPerf.firstHeader = performance.now() - requestPerf.start;
       }
-      let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
-      if (self.#strictFieldWhitespaceValidation) {
-        // stripInvalidWhitespaceFields returns its input by identity when nothing was
-        // stripped (the common case) — only then can the native-built object be reused.
-        const filtered = stripInvalidWhitespaceFields(rawheaders);
-        if (filtered !== rawheaders) {
-          rawheaders = filtered;
-          headers = toHeaderObject(filtered, headersTuple[2] || []);
-        }
-      }
+      const headers = receivedHeaders(headersTuple, self.#strictFieldWhitespaceValidation);
+      const rawheaders = headersTuple[0];
       // Remember the request headers on the stream (pushStream derives :scheme/:authority defaults
       // from them). kRequestHeaders survives respond() overwriting the bunHTTP2Headers slot. Only
       // the first HEADERS block counts - this handler also fires for trailers.
@@ -5186,17 +5190,8 @@ class ClientHttp2Session extends Http2Session {
       self.#reservedStreamsCount++;
       // PUSH_PROMISE: surface the server-pushed stream (with its REQUEST headers) on the session
       // 'stream' event; its eventual response HEADERS will fire 'push' on the pushed stream.
-      let rawheaders = headersTuple[0];
-      let headers = headersTuple[1];
-      if (self.#strictFieldWhitespaceValidation) {
-        // stripInvalidWhitespaceFields returns its input by identity when nothing was
-        // stripped (the common case) — only then can the native-built object be reused.
-        const filtered = stripInvalidWhitespaceFields(rawheaders);
-        if (filtered !== rawheaders) {
-          rawheaders = filtered;
-          headers = toHeaderObject(filtered, headersTuple[2] || []);
-        }
-      }
+      const headers = receivedHeaders(headersTuple, self.#strictFieldWhitespaceValidation);
+      const rawheaders = headersTuple[0];
       const pushedStream = new ClientHttp2Stream(pushId, self, headers);
       pushedStream[kPush] = true;
       pushedStream.once("close", () => {
@@ -5304,17 +5299,8 @@ class ClientHttp2Session extends Http2Session {
         flags: number,
       ) => {
         if (!self || typeof stream !== "object" || stream.rstCode) return;
-        let rawheaders = headersTuple[0];
-        let headers = headersTuple[1];
-        if (self.#strictFieldWhitespaceValidation) {
-          // stripInvalidWhitespaceFields returns its input by identity when nothing was
-          // stripped (the common case) — only then can the native-built object be reused.
-          const filtered = stripInvalidWhitespaceFields(rawheaders);
-          if (filtered !== rawheaders) {
-            rawheaders = filtered;
-            headers = toHeaderObject(filtered, headersTuple[2] || []);
-          }
-        }
+        const headers = receivedHeaders(headersTuple, self.#strictFieldWhitespaceValidation);
+        const rawheaders = headersTuple[0];
         const status = stream[bunHTTP2StreamStatus];
         const header_status = headers[HTTP2_HEADER_STATUS];
         const endOfStream = (flags & constants.NGHTTP2_FLAG_END_STREAM) !== 0;
