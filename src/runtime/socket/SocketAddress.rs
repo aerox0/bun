@@ -9,11 +9,12 @@ use core::ffi::{c_int, c_void};
 use core::mem;
 
 use bun_cares_sys::c_ares as ares;
-use bun_core::{EncodedSlice, String as BunString, ZStr, strings};
+use bun_core::{String as BunString, ZStr, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
+use bun_jsc::bun_string_jsc;
 use bun_jsc::{
-    CommonString, EncodedSliceJsc as _, JSGlobalObject, JSString, JSValue, JsClass, JsError,
-    JsResult, StringJsc, SysErrorJsc as _,
+    CommonString, JSGlobalObject, JSString, JSValue, JsClass, JsError, JsResult, StringJsc,
+    SysErrorJsc as _,
 };
 use bun_ptr::JsCell;
 use bun_uws_sys::sockaddr_storage;
@@ -426,7 +427,7 @@ impl SocketAddress {
         let address = Self::format_sockaddr(global, addr)?;
         Ok(JSSocketAddressDTO__create(
             global,
-            EncodedSlice::latin1(address.ip()).to_js(global),
+            Self::text_to_js(global, &address)?,
             address.port,
             address.is_ipv6,
         ))
@@ -438,7 +439,7 @@ impl SocketAddress {
         addr: &sockaddr_storage,
     ) -> JsResult<JSValue> {
         let address = Self::format_sockaddr(global, addr)?;
-        Ok(EncodedSlice::latin1(address.ip()).to_js(global))
+        Self::text_to_js(global, &address)
     }
 
     /// Node.js's `AddressToJS(env, addr, out)`: sets `address`, `family` and `port` of the object `out`.
@@ -451,10 +452,19 @@ impl SocketAddress {
         bun_jsc::cpp::JSSocketAddressDTO__assign(
             global,
             out,
-            EncodedSlice::latin1(address.ip()).to_js(global),
+            Self::text_to_js(global, &address)?,
             JSValue::js_number(f64::from(address.port)),
             address.is_ipv6,
         )
+    }
+
+    /// The address as a JS string. The name of the interface in a zone is bytes that the OS chose: UTF-8, as
+    /// `os.networkInterfaces()` reads it, so that the zone names the interface again when a socket parses it.
+    pub(crate) fn text_to_js(
+        global: &JSGlobalObject,
+        address: &bun_uws_sys::SocketAddress,
+    ) -> JsResult<JSValue> {
+        bun_string_jsc::create_utf8_for_js(global, address.ip())
     }
 
     /// Throws what Node.js throws when the interface of a link-local address has no name:

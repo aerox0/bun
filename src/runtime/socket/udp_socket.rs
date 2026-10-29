@@ -3,15 +3,15 @@ use core::cell::Cell;
 use core::ffi::c_char;
 use core::ffi::{c_int, c_void};
 
-use bun_core::{EncodedSlice, String as BunString, Utf8Bytes};
+use bun_core::{String as BunString, Utf8Bytes};
 use bun_io::KeepAlive;
 use bun_jsc::JsCell;
 use bun_jsc::array_buffer::BinaryType;
 use bun_jsc::bindgen::{self, IntoError as _, JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
 use bun_jsc::virtual_machine::VirtualMachine;
 use bun_jsc::{
-    EncodedSliceJsc as _, JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer,
-    StringJsc, SysErrorJsc, SystemError,
+    JSGlobalObject, JSValue, JsRef, JsResult, MarkedArgumentBuffer, StringJsc, SysErrorJsc,
+    SystemError,
 };
 use bun_ptr::BackRef;
 
@@ -213,6 +213,14 @@ extern "C" fn on_data(
                 return;
             }
         };
+        let hostname_js = match SocketAddress::text_to_js(global_this, &peer) {
+            Ok(v) => v,
+            Err(_) => {
+                loop_.exit();
+                this_value.ensure_still_alive();
+                return;
+            }
+        };
 
         let result = callback.call(
             global_this,
@@ -221,7 +229,7 @@ extern "C" fn on_data(
                 this_value,
                 payload_js,
                 JSValue::js_number(peer.port as f64),
-                EncodedSlice::latin1(peer.ip()).to_js(global_this),
+                hostname_js,
                 flags,
             ],
         );
