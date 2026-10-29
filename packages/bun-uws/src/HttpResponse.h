@@ -586,8 +586,6 @@ public:
     using Super::close;
 
     /* See AsyncSocket */
-    using Super::getRemoteAddress;
-    using Super::getRemoteAddressAsText;
     using Super::getNativeHandle;
 
     /* Throttle reads and writes */

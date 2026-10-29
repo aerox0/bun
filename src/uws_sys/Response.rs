@@ -13,7 +13,7 @@
 use core::ffi::{c_int, c_void};
 use core::marker::{PhantomData, PhantomPinned};
 
-use crate::SocketAddress;
+use crate::sockaddr_storage;
 use crate::thunk;
 use crate::thunk::OpaqueHandle;
 use crate::us_socket_t;
@@ -362,26 +362,10 @@ impl<const SSL: bool> Response<SSL> {
         }
     }
 
-    pub fn get_remote_socket_info(&mut self) -> Option<SocketAddress> {
-        let mut ip_ptr: *const u8 = core::ptr::null();
-        let mut port: i32 = 0;
-        let mut is_ipv6: bool = false;
-        // This function will fill in the slots and return len.
-        // if len is zero it will not fill in the slots so it is ub to
-        // return the struct in that case.
-        let ip_len =
-            c::uws_res_get_remote_address_info(self.as_raw(), &mut ip_ptr, &mut port, &mut is_ipv6);
-        if ip_len > 0 {
-            Some(SocketAddress::new(
-                // SAFETY: uws populated ip_ptr/ip_len with bytes valid until the next
-                // address lookup on this thread; copied before returning.
-                unsafe { bun_core::ffi::slice(ip_ptr, ip_len) },
-                port,
-                is_ipv6,
-            ))
-        } else {
-            None
-        }
+    /// `getpeername()` of the connection. `None` for a unix socket, and when the call fails.
+    pub fn remote_sockaddr(&mut self) -> Option<sockaddr_storage> {
+        // S008: `us_socket_t` is an `opaque_ffi!` ZST — safe deref.
+        us_socket_t::opaque_ref(self.downcast_socket()).remote_sockaddr()
     }
 
     /// Register an on-writable callback.
@@ -813,8 +797,8 @@ impl AnyResponse {
         }
     }
 
-    pub fn get_remote_socket_info(self) -> Option<SocketAddress> {
-        any_dispatch!(self, |r| r.get_remote_socket_info())
+    pub fn remote_sockaddr(self) -> Option<sockaddr_storage> {
+        any_dispatch!(self, |r| r.remote_sockaddr())
     }
 
     pub fn flush_headers(self, flush_immediately: bool) {
@@ -1262,14 +1246,6 @@ pub mod c {
         pub(crate) safe fn us_socket_mark_needs_more_not_ssl(socket: &mut uws_res);
         pub(crate) safe fn uws_res_state(ssl: c_int, res: &uws_res) -> State;
         pub(crate) safe fn uws_res_is_connect_request(ssl: i32, res: &mut uws_res) -> bool;
-        // Out-params are `&mut` (non-null, valid for write); the C shim only
-        // stores into them and returns a length — no read-through precondition.
-        pub(crate) safe fn uws_res_get_remote_address_info(
-            res: &mut uws_res,
-            dest: &mut *const u8,
-            port: &mut i32,
-            is_ipv6: &mut bool,
-        ) -> usize;
         pub(crate) safe fn uws_res_uncork(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_corked(ssl: i32, res: &mut uws_res);
         pub(crate) safe fn uws_res_send_when_complete(ssl: i32, res: &mut uws_res);

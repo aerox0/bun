@@ -2,7 +2,17 @@ import type { Server, ServerWebSocket, Subprocess, WebSocketHandler } from "bun"
 import { serve, spawn } from "bun";
 import { estimateShallowMemoryUsageOf } from "bun:jsc";
 import { afterEach, describe, expect, it } from "bun:test";
-import { bunEnv, bunExe, forceGuardMalloc, isASAN, isDebug, isWindows, tempDir, tls as tlsCert } from "harness";
+import {
+  bunEnv,
+  bunExe,
+  forceGuardMalloc,
+  isASAN,
+  isDebug,
+  isWindows,
+  linkLocalIPv6,
+  tempDir,
+  tls as tlsCert,
+} from "harness";
 import { once } from "node:events";
 import net, { isIP } from "node:net";
 import path from "node:path";
@@ -3682,6 +3692,38 @@ describe.concurrent("ServerWebSocket argument validation", () => {
     expect(() => publish(null, "x")).toThrow("Expected string");
     expect(() => publish("t")).toThrow("Missing argument");
   });
+});
+
+// A link-local address names a peer only together with its interface.
+it.skipIf(!linkLocalIPv6())("ws.remoteAddress has the zone of a link-local peer", async () => {
+  const { scoped } = linkLocalIPv6()!;
+  const address = Promise.withResolvers<string>();
+  using server = serve({
+    port: 0,
+    hostname: scoped,
+    fetch(req, server) {
+      if (server.upgrade(req)) return;
+      return new Response("no", { status: 400 });
+    },
+    websocket: {
+      open(ws) {
+        address.resolve(ws.remoteAddress);
+        ws.close();
+      },
+      message() {},
+    },
+  });
+  // A URL cannot hold a zone, so the handshake goes over a socket.
+  const client = await Bun.connect({ hostname: scoped, port: server.port!, socket: { data() {} } });
+  try {
+    client.write(
+      "GET / HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n" +
+        "Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n",
+    );
+    expect(await address.promise).toBe(scoped);
+  } finally {
+    client.end();
+  }
 });
 
 // The fd is closed before close() runs, so the address has to be read while the socket is still open.

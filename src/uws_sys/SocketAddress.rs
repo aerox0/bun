@@ -131,23 +131,14 @@ impl SocketAddress {
         self.len += bytes.len() as u8;
     }
 
-    pub(crate) fn new(ip: &[u8], port: i32, is_ipv6: bool) -> SocketAddress {
-        let mut address = SocketAddress {
-            text: [0; TEXT_CAPACITY],
-            len: 0,
-            port: port as u16,
-            is_ipv6,
-        };
-        address.append(&ip[..ip.len().min(TEXT_CAPACITY)]);
-        address
-    }
-
     pub fn ip(&self) -> &[u8] {
         &self.text[..usize::from(self.len)]
     }
 
-    pub fn is_loopback(&self) -> bool {
-        let ip = self.ip();
+    /// Whether `addr` is a loopback address: 127.0.0.0/8, also as an IPv4-mapped address, or ::1.
+    pub fn sockaddr_is_loopback(addr: &sockaddr_storage) -> bool {
+        let (address, _) = Self::without_zone(addr);
+        let ip = address.ip();
         // IPv4 loopback addresses
         if ip.starts_with(b"127.") {
             return true;

@@ -805,46 +805,6 @@ struct us_socket_t *us_socket_open(struct us_socket_t *s, int is_client, char *i
     return us_dispatch_open(s, is_client, ip, ip_length);
 }
 
-unsigned int us_get_remote_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
-{
-    // This function is manual inlining + modification of
-    //      us_socket_remote_address
-    //      AsyncSocket::getRemoteAddress
-    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
-    struct bsd_addr_t addr;
-    if (bsd_remote_addr(us_poll_fd(&s->p), &addr)) {
-        return 0;
-    }
-
-    int length = bsd_addr_get_ip_length(&addr);
-    if (!length) {
-        return 0;
-    }
-
-    memcpy(buf, bsd_addr_get_ip(&addr), length);
-    *port = bsd_addr_get_port(&addr);
-
-    return length;
-}
-
-unsigned int us_get_local_address_info(char *buf, struct us_socket_t *s, const char **dest, int *port, int *is_ipv6)
-{
-    struct bsd_addr_t addr;
-    if (bsd_local_addr(us_poll_fd(&s->p), &addr)) {
-        return 0;
-    }
-
-    int length = bsd_addr_get_ip_length(&addr);
-    if (!length) {
-        return 0;
-    }
-
-    memcpy(buf, bsd_addr_get_ip(&addr), length);
-    *port = bsd_addr_get_port(&addr);
-
-    return length;
-}
-
 void us_socket_ref(struct us_socket_t *s) {
 #ifdef LIBUS_USE_LIBUV
     uv_ref((uv_handle_t *) s->p.uv_p);

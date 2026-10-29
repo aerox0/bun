@@ -11,7 +11,6 @@ use core::mem;
 use bun_cares_sys::c_ares as ares;
 use bun_core::{EncodedSlice, String as BunString, ZStr, strings};
 use bun_jsc::bindgen::{JsHeap, JsLocal, JsPayload as _, JsScope, JsWrapper};
-use bun_jsc::bun_string_jsc;
 use bun_jsc::{
     CommonString, EncodedSliceJsc as _, JSGlobalObject, JSString, JSValue, JsClass, JsError,
     JsResult, StringJsc, SysErrorJsc as _,
@@ -385,35 +384,7 @@ impl SocketAddress {
     }
 }
 
-#[derive(thiserror::Error, strum::IntoStaticStr, Debug)]
-pub enum AddressError {
-    /// Too long or short to be an IPv4 or IPv6 address.
-    #[error("InvalidLength")]
-    InvalidLength,
-}
-
 impl SocketAddress {
-    /// Create a new IP socket address. `addr` is assumed to be a valid ipv4 or ipv6
-    /// address. Port is in host byte order.
-    ///
-    /// ## Errors
-    /// - If `addr` is not 4 or 16 bytes long.
-    pub(crate) fn init(addr: &[u8], port_: u16) -> Result<SocketAddress, AddressError> {
-        match addr.len() {
-            4 => Ok(Self::init_ipv4(
-                <[u8; 4]>::try_from(&addr[..4]).unwrap(),
-                port_,
-            )),
-            16 => Ok(Self::init_ipv6(
-                <[u8; 16]>::try_from(&addr[..16]).unwrap(),
-                port_,
-                0,
-                0,
-            )),
-            _ => Err(AddressError::InvalidLength),
-        }
-    }
-
     /// Create an IPv4 socket address. `addr` is assumed to be valid. Port is in host byte order.
     pub(crate) fn init_ipv4(addr: [u8; 4], port_: u16) -> SocketAddress {
         // TODO: make sure casting doesn't swap byte order on us.
@@ -442,57 +413,8 @@ impl SocketAddress {
 }
 
 // =============================================================================
-// ================================ DESTRUCTORS ================================
+// ============================= KERNEL ADDRESSES ==============================
 // =============================================================================
-
-impl SocketAddress {
-    /// Turn this address into a DTO.
-    ///
-    /// This is similar to `.toJS`, but differs in the following ways:
-    /// - `this` is consumed
-    /// - result object is not an instance of `SocketAddress`, so
-    ///   `SocketAddress.isSocketAddress(dto) === false`
-    /// - address, port, etc. are put directly onto the object instead of being
-    ///   accessed via getters on the prototype.
-    ///
-    /// This method is slightly faster if you are creating a lot of socket addresses
-    /// that will not be around for very long. `createDTO` is even faster, but
-    /// requires callers to already have a presentation-formatted address.
-    pub(crate) fn into_dto(self, global: &JSGlobalObject) -> JsResult<JSValue> {
-        let address = match self._presentation.take() {
-            cached if cached.tag() != bun_core::Tag::Dead => cached,
-            _ => self.fmt_presentation(),
-        };
-        Ok(JSSocketAddressDTO__create(
-            global,
-            address.into_js(global)?,
-            self.port(),
-            self.family() == AF::INET6,
-        ))
-    }
-
-    /// Directly create a socket address DTO. This is a POJO with address, port, and family properties.
-    /// Used for hot paths that provide existing, pre-formatted/validated address
-    /// data to JS.
-    ///
-    /// - The address string is assumed to be ASCII and a valid IP address (either v4 or v6).
-    /// - Port is a valid `in_port_t` (between 0 and 2^16) in host byte order.
-    pub(crate) fn create_dto(
-        global_object: &JSGlobalObject,
-        addr_: &[u8],
-        port_: u16,
-        is_ipv6: bool,
-    ) -> JsResult<JSValue> {
-        debug_assert!(!addr_.is_empty());
-
-        Ok(JSSocketAddressDTO__create(
-            global_object,
-            bun_string_jsc::create_utf8_for_js(global_object, addr_)?,
-            port_,
-            is_ipv6,
-        ))
-    }
-}
 
 impl SocketAddress {
     /// `{ address, family, port }` of an address that the kernel returned (`getsockname()`, `getpeername()`), as
@@ -547,6 +469,15 @@ impl SocketAddress {
             )
         })
     }
+}
+
+/// [`SocketAddress::dto_from_sockaddr`] for C++.
+// HOST_EXPORT(Bun__sockaddrToJS, c)
+pub(crate) fn sockaddr_to_js(
+    global: &JSGlobalObject,
+    addr: &bun_uws_sys::sockaddr_storage,
+) -> JsResult<JSValue> {
+    SocketAddress::dto_from_sockaddr(global, addr)
 }
 
 unsafe extern "C" {

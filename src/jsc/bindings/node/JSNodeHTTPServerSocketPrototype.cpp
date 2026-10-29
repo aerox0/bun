@@ -1,16 +1,22 @@
 #include "JSNodeHTTPServerSocketPrototype.h"
 #include "JSNodeHTTPServerSocket.h"
-#include "JSSocketAddressDTO.h"
 #include "AsyncContextFrame.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
 #include <wtf/text/WTFString.h>
 #include <cmath>
+#if OS(WINDOWS)
+#include <winsock2.h>
+#else
+#include <sys/socket.h>
+#endif
 
 extern "C" EncodedJSValue us_socket_buffered_js_write(void* socket, bool is_ssl, bool ended, bool hold, bool flushesBufferOnDrain, us_socket_stream_buffer_t* streamBuffer, JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue data, JSC::EncodedJSValue encoding);
-extern "C" uint64_t uws_res_get_remote_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
-extern "C" uint64_t uws_res_get_local_address_info(void* res, const char** dest, int* port, bool* is_ipv6);
+extern "C" int us_socket_local_sockaddr(us_socket_t*, struct sockaddr_storage* out);
+extern "C" int us_socket_remote_sockaddr(us_socket_t*, struct sockaddr_storage* out);
+// `{ address, family, port }`, with the zone of a link-local address. Throws, and returns an empty value, when the zone has no interface.
+extern "C" JSC::EncodedJSValue Bun__sockaddrToJS(JSC::JSGlobalObject*, const struct sockaddr_storage* addr);
 extern "C" void us_socket_shutdown(us_socket_t*);
 extern "C" JSC::EncodedJSValue Bun__socketReadErrorFromCloseCode(JSC::JSGlobalObject* globalObject, int code);
 
@@ -445,76 +451,40 @@ JSC_DEFINE_CUSTOM_SETTER(jsNodeHttpServerSocketSetterDuplex, (JSC::JSGlobalObjec
     return true;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+// `{ address, family, port }` of the address that `readSockaddr` returns for the connection, or null for a unix socket
+// and for a socket that is closed. Read once: `cached` keeps it.
+static JSC::EncodedJSValue socketAddress(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue thisValue, JSC::WriteBarrier<JSC::JSObject> JSNodeHTTPServerSocket::* cached, int (*readSockaddr)(us_socket_t*, struct sockaddr_storage*))
 {
     auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
     auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
     if (!thisObject) [[unlikely]] {
         return JSValue::encode(JSC::jsUndefined());
     }
-    if (thisObject->m_remoteAddress) {
-        return JSValue::encode(thisObject->m_remoteAddress.get());
+    if (auto* address = (thisObject->*cached).get()) {
+        return JSValue::encode(address);
     }
 
     us_socket_t* socket = thisObject->socket;
-    if (!socket) {
+    struct sockaddr_storage addr;
+    if (!socket || !readSockaddr(socket, &addr)) {
         return JSValue::encode(JSC::jsNull());
     }
 
-    const char* address = nullptr;
-    int port = 0;
-    bool is_ipv6 = false;
+    JSValue address = JSValue::decode(Bun__sockaddrToJS(defaultGlobalObject(globalObject), &addr));
+    RETURN_IF_EXCEPTION(scope, {});
+    (thisObject->*cached).set(vm, thisObject, asObject(address));
+    return JSValue::encode(address);
+}
 
-    uws_res_get_remote_address_info(socket, &address, &port, &is_ipv6);
-
-    if (address == nullptr) {
-        return JSValue::encode(JSC::jsNull());
-    }
-
-    auto addressString = WTF::String::fromUTF8(address);
-    if (addressString.isEmpty()) {
-        return JSValue::encode(JSC::jsNull());
-    }
-
-    auto* object = JSSocketAddressDTO::create(defaultGlobalObject(globalObject), jsString(vm, addressString), port, is_ipv6);
-    thisObject->m_remoteAddress.set(vm, thisObject, object);
-    return JSValue::encode(object);
+JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterRemoteAddress, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
+{
+    return socketAddress(globalObject, thisValue, &JSNodeHTTPServerSocket::m_remoteAddress, us_socket_remote_sockaddr);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterLocalAddress, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    auto& vm = globalObject->vm();
-    auto* thisObject = dynamicDowncast<JSNodeHTTPServerSocket>(JSC::JSValue::decode(thisValue));
-    if (!thisObject) [[unlikely]] {
-        return JSValue::encode(JSC::jsUndefined());
-    }
-    if (thisObject->m_localAddress) {
-        return JSValue::encode(thisObject->m_localAddress.get());
-    }
-
-    us_socket_t* socket = thisObject->socket;
-    if (!socket) {
-        return JSValue::encode(JSC::jsNull());
-    }
-
-    const char* address = nullptr;
-    int port = 0;
-    bool is_ipv6 = false;
-
-    uws_res_get_local_address_info(socket, &address, &port, &is_ipv6);
-
-    if (address == nullptr) {
-        return JSValue::encode(JSC::jsNull());
-    }
-
-    auto addressString = WTF::String::fromUTF8(address);
-    if (addressString.isEmpty()) {
-        return JSValue::encode(JSC::jsNull());
-    }
-
-    auto* object = JSSocketAddressDTO::create(defaultGlobalObject(globalObject), jsString(vm, addressString), port, is_ipv6);
-    thisObject->m_localAddress.set(vm, thisObject, object);
-    return JSValue::encode(object);
+    return socketAddress(globalObject, thisValue, &JSNodeHTTPServerSocket::m_localAddress, us_socket_local_sockaddr);
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsNodeHttpServerSocketGetterOnClose, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))

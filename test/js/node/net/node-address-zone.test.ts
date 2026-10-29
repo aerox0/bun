@@ -16,6 +16,7 @@
 import assert from "node:assert";
 import dgram from "node:dgram";
 import { once } from "node:events";
+import http from "node:http";
 import net from "node:net";
 import os from "node:os";
 import { describe, test } from "node:test";
@@ -224,6 +225,50 @@ describe("node:net", () => {
         );
       } finally {
         close();
+      }
+    });
+  }
+});
+
+describe("node:http", () => {
+  for (const [name, host, family, skip] of [
+    ["a link-local address, with the zone", linkLocal?.scoped, "IPv6", !linkLocal],
+    ["127.0.0.1", "127.0.0.1", "IPv4", false],
+  ] as const) {
+    test(`server.address() and req.socket of a server on ${name}`, { skip }, async () => {
+      const request = Promise.withResolvers<object>();
+      const server = http.createServer((req, res) => {
+        const { remoteAddress, remoteFamily, remotePort, localAddress, localPort } = req.socket;
+        request.resolve({ remoteAddress, remoteFamily, remotePort, localAddress, localPort });
+        res.end();
+      });
+      server.listen(0, host);
+      await once(server, "listening");
+      try {
+        const listening = server.address() as net.AddressInfo;
+        // The address that the server printed connects to it.
+        const [response] = (await once(
+          http.get({ host: listening.address, port: listening.port, agent: false }),
+          "response",
+        )) as [http.IncomingMessage];
+        const clientPort = response.socket.localPort;
+        response.resume();
+        await once(response, "end");
+        assert.deepStrictEqual(
+          { listening, request: await request.promise },
+          {
+            listening: { address: host, family, port: listening.port },
+            request: {
+              remoteAddress: host,
+              remoteFamily: family,
+              remotePort: clientPort,
+              localAddress: host,
+              localPort: listening.port,
+            },
+          },
+        );
+      } finally {
+        server.close();
       }
     });
   }
