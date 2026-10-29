@@ -621,6 +621,17 @@ const isNamedPipeSocket: (socket: SocketHandle | null) => boolean = $bindgen(
   "isNamedPipeSocket",
 );
 const getBufferedAmount: (socket: SocketHandle) => number = $bindgen("socket_body.bind.ts", "getBufferedAmount");
+// Node's handle.getsockname(out) and handle.getpeername(out): one system call
+// sets `address`, `family` and `port` of `out`. False, with `out` as it was,
+// for a handle with no IP address.
+const getSockName: (socket: SocketHandle, out: $Node.SocketName) => boolean = $bindgen(
+  "socket_body.bind.ts",
+  "getSockName",
+);
+const getPeerName: (socket: SocketHandle, out: $Node.SocketName) => boolean = $bindgen(
+  "socket_body.bind.ts",
+  "getPeerName",
+);
 
 const bunTlsSymbol: typeof netSymbols.bunTlsSymbol = netSymbols.bunTlsSymbol;
 const bunSocketServerOptions: typeof netSymbols.bunSocketServerOptions = netSymbols.bunSocketServerOptions;
@@ -3131,13 +3142,9 @@ Socket.prototype._getpeername = function (this: $Node.Socket) {
   if (!this._handle || this.connecting) {
     return this._peername || {};
   } else if (!this._peername) {
-    const family = this._handle.remoteFamily;
-    if (!family) return {};
-    this._peername = {
-      family,
-      address: this._handle.remoteAddress,
-      port: this._handle.remotePort,
-    };
+    const out: $Node.SocketName = {};
+    if (!getPeerName(this._handle, out)) return out;
+    this._peername = out;
   }
   return this._peername;
 };
@@ -3146,13 +3153,9 @@ Socket.prototype._getsockname = function (this: $Node.Socket) {
   if (!this._handle || this.connecting) {
     return this._sockname || {};
   } else if (!this._sockname) {
-    const family = this._handle.localFamily;
-    if (!family) return {};
-    this._sockname = {
-      family,
-      address: this._handle.localAddress,
-      port: this._handle.localPort,
-    };
+    const out: $Node.SocketName = {};
+    if (!getSockName(this._handle, out)) return out;
+    this._sockname = out;
   }
   return this._sockname;
 };

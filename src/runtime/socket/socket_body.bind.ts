@@ -118,6 +118,10 @@ export const checkServerIdentityInHandshake = b.fn({ args: { socket: SocketHandl
 export const firstFlightBeforeFin = b.fn({ args: { socket: SocketHandle } });
 export const isNamedPipeSocket = b.fn({ args: { socket: SocketHandle }, returns: b.bool });
 export const getBufferedAmount = b.fn({ args: { socket: SocketHandle }, returns: b.usize });
+/** Node's `handle.getsockname(out)` and `handle.getpeername(out)`: one system call sets `address`, `family` and `port` of `out`. False, with `out` as it was, for a handle with no IP address. */
+const setsAddress = { ...js, args: { socket: SocketHandle, out: b.any }, returns: b.bool } as const;
+export const getSockName = b.fn(setsAddress);
+export const getPeerName = b.fn(setsAddress);
 /** `tls` is `true` or what `SSLConfig` takes, and can hold the `secureContext`. */
 export const DuplexTLSOptions = b.dictionary({
   socket: SocketHandler,

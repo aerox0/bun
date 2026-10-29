@@ -4647,6 +4647,50 @@ pub(crate) fn get_buffered_amount(socket: SocketHandle<'_>) -> usize {
     }
 }
 
+/// node:net's `_getsockname()`, Node's `handle.getsockname(out)`: one `getsockname()` sets `address`, `family`
+/// and `port` of `out`. False, with `out` as it was, for a handle with no IP address.
+pub(crate) fn get_sock_name(
+    cx: &mut JsScope<'_>,
+    socket: SocketHandle<'_>,
+    out: JsLocal<'_>,
+) -> JsResult<bool> {
+    let addr = match socket {
+        SocketHandle::Tcp(this) => this.socket.get().local_sockaddr(),
+        SocketHandle::Tls(this) => this.socket.get().local_sockaddr(),
+        SocketHandle::Ignored(_) => None,
+    };
+    set_address(cx.global(), out.to_js(), addr)
+}
+
+/// node:net's `_getpeername()`, Node's `handle.getpeername(out)`, as [`get_sock_name`].
+pub(crate) fn get_peer_name(
+    cx: &mut JsScope<'_>,
+    socket: SocketHandle<'_>,
+    out: JsLocal<'_>,
+) -> JsResult<bool> {
+    let addr = match socket {
+        SocketHandle::Tcp(this) => this.socket.get().remote_sockaddr(),
+        SocketHandle::Tls(this) => this.socket.get().remote_sockaddr(),
+        SocketHandle::Ignored(_) => None,
+    };
+    set_address(cx.global(), out.to_js(), addr)
+}
+
+fn set_address(
+    global: &JSGlobalObject,
+    out: JSValue,
+    addr: Option<bun_uws_sys::sockaddr_storage>,
+) -> JsResult<bool> {
+    if !out.is_object() {
+        return Err(global.throw_invalid_arguments(format_args!("Expected object")));
+    }
+    let Some(addr) = addr else {
+        return Ok(false);
+    };
+    SocketAddress::assign_from_sockaddr(global, out, &addr)?;
+    Ok(true)
+}
+
 pub(crate) fn create_socket_pair(cx: &mut JsScope<'_>) -> JsResult<[c_int; 2]> {
     jsc::mark_binding!();
     let global = cx.global();
