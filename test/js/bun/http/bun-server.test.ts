@@ -5,6 +5,7 @@ import {
   bunExe,
   bunRun,
   isWindows,
+  linkLocalIPv6,
   normalizeBunSnapshot,
   rejectUnauthorizedScope,
   tempDir,
@@ -263,6 +264,40 @@ describe.concurrent("Server", () => {
       const response = await fetch(`http://[::1]:${server.port}/`);
       expect({ status: response.status, text: await response.text() }).toEqual({ status: 200, text: "Hello" });
     }
+  });
+
+  // A link-local address names a peer only together with its interface, so
+  // an address without the zone is one that nothing can connect to.
+  test.skipIf(!linkLocalIPv6())("address and requestIP() have the zone of a link-local address", async () => {
+    const { scoped } = linkLocalIPv6()!;
+    using server = Bun.serve({
+      port: 0,
+      hostname: scoped,
+      fetch(req, server) {
+        return Response.json(server.requestIP(req));
+      },
+    });
+    expect(server.address).toEqual({ address: scoped, family: "IPv6", port: server.port });
+
+    // A URL cannot hold a zone, so the request goes over a socket.
+    const received: Buffer[] = [];
+    const { resolve, promise } = Promise.withResolvers<void>();
+    const connection = await Bun.connect({
+      hostname: server.address.address,
+      port: server.port,
+      socket: {
+        data: (_socket, data) => void received.push(data),
+        close: () => resolve(),
+      },
+    });
+    const { localPort } = connection;
+    connection.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
+    await promise;
+    expect(JSON.parse(Buffer.concat(received).toString().split("\r\n\r\n")[1])).toEqual({
+      address: scoped,
+      family: "IPv6",
+      port: localPort,
+    });
   });
 
   test("abort signal on server", async () => {

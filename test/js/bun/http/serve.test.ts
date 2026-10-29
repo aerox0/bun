@@ -18,7 +18,6 @@ import {
   isPosix,
   isWindows,
   libcPathForDlopen,
-  linkLocalIPv6,
   MAX_PATH_BYTES,
   runFixtureMaxRSS,
   tempDir,
@@ -2946,40 +2945,6 @@ describe("server.requestIP", () => {
       address: "::1",
       family: "IPv6",
       port: expect.any(Number),
-    });
-  });
-
-  // A link-local address names a peer only together with its interface, so
-  // an address without the zone is one that nothing can connect to.
-  it.skipIf(!linkLocalIPv6())("link-local: address and requestIP have the zone", async () => {
-    const { scoped } = linkLocalIPv6()!;
-    using server = Bun.serve({
-      port: 0,
-      hostname: scoped,
-      fetch(req, server) {
-        return Response.json(server.requestIP(req));
-      },
-    });
-    expect(server.address).toEqual({ address: scoped, family: "IPv6", port: server.port });
-
-    // A URL cannot hold a zone, so the request goes over a socket.
-    const received: Buffer[] = [];
-    const { resolve, promise } = Promise.withResolvers<void>();
-    const connection = await Bun.connect({
-      hostname: server.address.address,
-      port: server.port,
-      socket: {
-        data: (_socket, data) => void received.push(data),
-        close: () => resolve(),
-      },
-    });
-    const { localPort } = connection;
-    connection.write("GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n");
-    await promise;
-    expect(JSON.parse(Buffer.concat(received).toString().split("\r\n\r\n")[1])).toEqual({
-      address: scoped,
-      family: "IPv6",
-      port: localPort,
     });
   });
 
